@@ -1,0 +1,43 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8099,
+    "publicUrl": ""
+  },
+  "auth": {
+    "sessionTtl": 604800,
+    "cookieDomain": "",
+    "registration": "closed",
+    "passwordMinLength": 10,
+    "requireSecondFactorForAdmins": false
+  },
+  "oidc": {
+    "signingAlgorithm": "ES256",
+    "idTokenTtl": 600,
+    "accessTokenTtl": 3600,
+    "codeTtl": 60,
+    "refreshTokenTtl": 2592000,
+    "disableDeviceFlow": false
+  },
+  "email": {
+    "host": "",
+    "port": 587,
+    "username": "",
+    "password": "",
+    "fromName": "Fire ID",
+    "fromEmail": "",
+    "startTls": true
+  },
+  "logging": {
+    "level": "info"
+  },
+  "update": {
+    "enabled": false,
+    "channel": "stable",
+    "checkInterval": 3600,
+    "source": "github",
+    "proxyBaseUrl": "",
+    "repo": "lieyanc/FireID"
+  },
+  "dataDir": "./data"
+}
