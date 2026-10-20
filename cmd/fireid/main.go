@@ -114,6 +114,8 @@ func main() {
 	srv, err := api.New(api.Deps{
 		Store:             st,
 		Auth:              authSvc,
+		Config:            cfgStore,
+		SecretBox:         box,
 		Log:               slog.Default(),
 		Web:               web.FS(),
 		PublicBase:        publicBase,
@@ -173,10 +175,21 @@ func housekeeping(ctx context.Context, st *store.Store) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if n, err := st.DeleteExpiredSessions(); err != nil {
-				slog.Warn("could not delete expired sessions", "err", err)
-			} else if n > 0 {
-				slog.Debug("deleted expired sessions", "count", n)
+			for _, job := range []struct {
+				what string
+				run  func() (int64, error)
+			}{
+				{"sessions", st.DeleteExpiredSessions},
+				{"authorization requests", st.DeleteExpiredAuthRequests},
+				{"authorization codes", st.DeleteExpiredAuthCodes},
+				{"access tokens", st.DeleteExpiredAccessTokens},
+				{"refresh tokens", st.DeleteExpiredRefreshTokens},
+			} {
+				if n, err := job.run(); err != nil {
+					slog.Warn("could not delete expired "+job.what, "err", err)
+				} else if n > 0 {
+					slog.Debug("deleted expired "+job.what, "count", n)
+				}
 			}
 		}
 	}

@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/lieyanc/FireID/internal/auth"
+	"github.com/lieyanc/FireID/internal/config"
+	"github.com/lieyanc/FireID/internal/oidc"
+	"github.com/lieyanc/FireID/internal/secretbox"
 	"github.com/lieyanc/FireID/internal/store"
 	"github.com/lieyanc/FireID/internal/version"
 )
@@ -28,10 +31,12 @@ const maxBodyBytes = 1 << 20 // 1 MiB
 
 // Deps is what the API server needs from the rest of the program.
 type Deps struct {
-	Store *store.Store
-	Auth  *auth.Service
-	Log   *slog.Logger
-	Web   fs.FS
+	Store     *store.Store
+	Auth      *auth.Service
+	Config    *config.Store
+	SecretBox *secretbox.Box
+	Log       *slog.Logger
+	Web       fs.FS
 	// PublicBase is the externally reachable base URL (the OIDC issuer).
 	PublicBase string
 	// TrustProxyHeaders allows X-Forwarded-For and X-Forwarded-Proto to be
@@ -44,21 +49,29 @@ type Deps struct {
 
 // Server holds the assembled handlers.
 type Server struct {
-	deps   Deps
-	mux    *http.ServeMux
-	http   *http.Server
-	listen net.Listener
+	deps         Deps
+	mux          *http.ServeMux
+	http         *http.Server
+	listen       net.Listener
+	oidcProvider *oidc.Provider
 }
 
 // New builds the server and its routes.
 func New(deps Deps) (*Server, error) {
-	if deps.Store == nil || deps.Auth == nil {
-		return nil, errors.New("api: store and auth are required")
+	if deps.Store == nil || deps.Auth == nil || deps.Config == nil || deps.SecretBox == nil {
+		return nil, errors.New("api: store, auth, config and secretbox are required")
 	}
 	if deps.Log == nil {
 		deps.Log = slog.Default()
 	}
 	s := &Server{deps: deps, mux: http.NewServeMux()}
+
+	oidcProv, err := oidc.NewProvider(deps.Store, deps.SecretBox, deps.Auth, deps.Config, deps.Log)
+	if err != nil {
+		return nil, fmt.Errorf("create OIDC provider: %w", err)
+	}
+	s.oidcProvider = oidcProv
+
 	s.routes()
 	return s, nil
 }
@@ -73,9 +86,15 @@ func (s *Server) Handler() http.Handler {
 // withCrossSite rejects unsafe methods that did not originate from this site.
 // Server-to-server callers (the token endpoint, the forward-auth subrequest)
 // send no Origin and no Sec-Fetch-Site, and pass through.
+//
+// The OIDC provider's endpoints are exempt: they are meant to be reached from
+// other sites (a form-posted logout, a browser-based client calling the token
+// endpoint), and none of them acts on the session cookie alone — the token
+// endpoints authenticate the client, and logout signs the browser out only for
+// a valid id_token_hint naming the signed-in user.
 func (s *Server) withCrossSite(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.crossSite(r) {
+		if !oidc.Handles(r.URL.Path) && s.crossSite(r) {
 			s.deps.Log.Warn("rejected cross-site request", "method", r.Method, "path", r.URL.Path,
 				"origin", r.Header.Get("Origin"), "secFetchSite", r.Header.Get("Sec-Fetch-Site"),
 				"ip", s.clientIP(r))
@@ -139,10 +158,22 @@ func (s *Server) routes() {
 	h("POST /api/auth/login", s.login)
 	h("POST /api/auth/logout", s.logout)
 	h("GET /api/auth/me", s.me)
+	h("POST /api/auth/login/totp", s.loginTOTP)
+	// The provider sends the browser here with a pending authorization
+	// request; the form endpoint is the no-JavaScript sign-in for it.
+	h("GET /login", s.oidcLogin)
+	h("POST /oidc/login", s.oidcLoginPOST)
 
-	// The UI catches everything else. Unknown /api/ paths must return JSON, not
-	// the HTML shell, so a typo in the frontend fails loudly.
-	s.mux.Handle("/", http.HandlerFunc(s.static))
+	// The provider's endpoints live at the root (they are relative to the
+	// issuer); the UI catches everything else. Unknown /api/ paths must
+	// return JSON, not the HTML shell, so a typo in the frontend fails loudly.
+	s.mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if oidc.Handles(r.URL.Path) {
+			s.oidcProvider.ServeHTTP(w, r)
+			return
+		}
+		s.static(w, r)
+	}))
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +282,7 @@ func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
 }
 
 type setupRequest struct {
-	Token       string `json:"token"`
+	Token       string `json:"setupToken"`
 	Username    string `json:"username"`
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
@@ -282,8 +313,15 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, "internal_error", "could not hash the password")
 		return
 	}
+	username := req.Username
+	if username == "" {
+		// Default username to email local-part for setup flow
+		if at := strings.Index(req.Email, "@"); at > 0 {
+			username = req.Email[:at]
+		}
+	}
 	user, err := s.deps.Store.CreateUser(store.NewUser{
-		Username:     req.Username,
+		Username:     username,
 		Email:        req.Email,
 		DisplayName:  req.DisplayName,
 		PasswordHash: hash,
@@ -312,7 +350,8 @@ type loginRequest struct {
 	Password string `json:"password"`
 	Code     string `json:"code"`
 	// UserID is returned by a challenge response and sent back with the code.
-	UserID int64 `json:"userId"`
+	UserID    int64  `json:"userId"`
+	AuthReqID string `json:"authReqId"` // Optional: for OIDC flow
 }
 
 // login performs a password sign-in, or completes one with a TOTP code.
@@ -348,7 +387,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.finishLogin(w, r, res)
+	s.finishLogin(w, r, res, &req)
 }
 
 // loginTOTP completes a sign-in that requires a second factor. It is separated
@@ -387,11 +426,13 @@ func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	s.finishLogin(w, r, res)
+	s.finishLogin(w, r, res, &req)
 }
 
-// finishLogin issues the session cookie and returns the account.
-func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.LoginResult) {
+// finishLogin issues the session cookie and returns the account. When the
+// sign-in belongs to an authorization request, the response also says where the
+// browser goes next.
+func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.LoginResult, req *loginRequest) {
 	token, sess, err := s.deps.Auth.StartSession(res, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", "could not start a session")
@@ -400,7 +441,27 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.L
 	s.deps.Auth.SetSessionCookie(w, token, sess.ExpiresAt)
 	s.deps.Log.Info("sign-in", "userId", res.User.ID, "username", res.User.Username,
 		"amr", res.AMR, "ip", s.clientIP(r))
-	writeJSON(w, http.StatusOK, map[string]any{"user": publicUser(res.User)})
+
+	resp := map[string]any{"user": publicUser(res.User)}
+	if req.AuthReqID != "" {
+		d, err := s.oidcProvider.Continue(req.AuthReqID, sess, res.User, true)
+		switch {
+		case errors.Is(err, oidc.ErrUnknownRequest):
+			resp["authRequestError"] = "expired"
+		case err != nil:
+			s.deps.Log.Error("could not continue the authorization request", "err", err)
+			resp["authRequestError"] = "internal_error"
+		case d.NeedLogin:
+			// Signed in, but not strongly enough for what the app asked.
+			resp["authRequestError"] = "stronger_authentication_required"
+		default:
+			resp["redirectTo"] = d.Redirect
+			if d.Denied != "" {
+				resp["denied"] = d.Denied
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // logout revokes the session. It is a state-changing POST, so it carries the
@@ -715,5 +776,110 @@ func (s *Server) failFromAuth(w http.ResponseWriter, err error) {
 		fail(w, http.StatusForbidden, "forbidden", err.Error())
 	default:
 		s.failFromStore(w, err, "authentication failed")
+	}
+}
+
+// oidcLogin handles GET /login?auth_req_id=<id>, where the provider sends the
+// browser with a pending authorization request. A signed-in browser whose
+// session satisfies the request goes straight on; otherwise the UI shows the
+// sign-in form and posts back with the same request ID.
+func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
+	authReqID := r.URL.Query().Get("auth_req_id")
+	if authReqID == "" {
+		http.Error(w, "missing auth_req_id", http.StatusBadRequest)
+		return
+	}
+	sess, user, err := s.deps.Auth.SessionUser(r)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.deps.Log.Error("session lookup failed", "err", err)
+		}
+		sess, user = nil, nil
+	}
+	d, err := s.oidcProvider.Continue(authReqID, sess, user, false)
+	if errors.Is(err, oidc.ErrUnknownRequest) {
+		http.Error(w, "This sign-in request has expired. Go back to the application and try again.", http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		s.deps.Log.Error("could not continue the authorization request", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if d.NeedLogin {
+		http.Redirect(w, r, "/?login=1&auth_req_id="+url.QueryEscape(authReqID), http.StatusFound)
+		return
+	}
+	http.Redirect(w, r, d.Redirect, http.StatusFound)
+}
+
+// oidcLoginPOST is the form-encoded sign-in for an authorization request:
+// username, password, an optional TOTP code, and auth_req_id. It exists so a
+// browser without JavaScript can still complete the flow.
+func (s *Server) oidcLoginPOST(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "cannot parse form", http.StatusBadRequest)
+		return
+	}
+	authReqID := r.PostFormValue("auth_req_id")
+	username := r.PostFormValue("username")
+	password := r.PostFormValue("password")
+	code := r.PostFormValue("code")
+	if authReqID == "" || username == "" || password == "" {
+		http.Error(w, "auth_req_id, username and password are required", http.StatusBadRequest)
+		return
+	}
+	ip := s.clientIP(r)
+
+	res, err := s.deps.Auth.AuthenticatePassword(username, password, ip)
+	if errors.Is(err, auth.ErrSecondFactorRequired) {
+		if code == "" {
+			http.Error(w, "a second-factor code is required", http.StatusUnauthorized)
+			return
+		}
+		var user *store.User
+		if user, err = s.deps.Store.UserByUsername(username); err == nil {
+			res, err = s.deps.Auth.AuthenticateTOTP(user.ID, code, ip, true)
+		}
+	}
+	if err != nil {
+		var limited *auth.RateLimitError
+		switch {
+		case errors.As(err, &limited):
+			w.Header().Set("Retry-After", strconv.Itoa(int(limited.RetryAfter.Seconds())+1))
+			http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
+		case errors.Is(err, auth.ErrSecondFactorNotConfigured):
+			http.Error(w, "this account must enrol a second factor before signing in to applications", http.StatusForbidden)
+		case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, store.ErrNotFound):
+			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
+			http.Error(w, "invalid username, password or code", http.StatusUnauthorized)
+		default:
+			s.deps.Log.Error("sign-in failed", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	token, sess, err := s.deps.Auth.StartSession(res, ip, r.UserAgent())
+	if err != nil {
+		s.deps.Log.Error("could not start a session", "userId", res.User.ID, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	s.deps.Auth.SetSessionCookie(w, token, sess.ExpiresAt)
+	s.deps.Log.Info("sign-in", "userId", res.User.ID, "username", res.User.Username, "amr", res.AMR, "ip", ip)
+
+	d, err := s.oidcProvider.Continue(authReqID, sess, res.User, true)
+	switch {
+	case errors.Is(err, oidc.ErrUnknownRequest):
+		http.Error(w, "You are signed in, but this sign-in request has expired. Go back to the application and try again.", http.StatusBadRequest)
+	case err != nil:
+		s.deps.Log.Error("could not continue the authorization request", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	case d.NeedLogin:
+		http.Error(w, "This application requires a stronger sign-in, such as a second factor.", http.StatusForbidden)
+	default:
+		http.Redirect(w, r, d.Redirect, http.StatusSeeOther)
 	}
 }

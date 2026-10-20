@@ -3,6 +3,7 @@ package store
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -48,6 +49,13 @@ func NewSessionToken() (token, hash string, err error) {
 func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+// VerifyTokenHash checks whether the given plaintext token matches the stored hash
+// in constant time.
+func VerifyTokenHash(token, hash string) bool {
+	computed := HashToken(token)
+	return subtle.ConstantTimeCompare([]byte(computed), []byte(hash)) == 1
 }
 
 // CreateSession records a new session and returns it with the token to hand to
@@ -241,18 +249,22 @@ func (s *Store) revokeSessionsTx(tx *sql.Tx, userID int64, now string) error {
 	return nil
 }
 
-// revokeRefreshTokensTx revokes all refresh tokens of a user.
+// revokeRefreshTokensTx revokes all refresh and access tokens of a user, so a
+// password change or a disabled account takes effect at the resource servers
+// too, not only in the browser.
 func (s *Store) revokeRefreshTokensTx(tx *sql.Tx, userID int64, reason, now string) error {
 	const q = `UPDATE refresh_tokens SET revoked_at = ?, revoked_reason = ?
 		WHERE user_id = ? AND revoked_at = ''`
-	var err error
+	const qa = `UPDATE access_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at = ''`
+	exec := s.db.Exec
 	if tx != nil {
-		_, err = tx.Exec(q, now, reason, userID)
-	} else {
-		_, err = s.db.Exec(q, now, reason, userID)
+		exec = tx.Exec
 	}
-	if err != nil {
+	if _, err := exec(q, now, reason, userID); err != nil {
 		return fmt.Errorf("revoke refresh tokens: %w", err)
+	}
+	if _, err := exec(qa, now, userID); err != nil {
+		return fmt.Errorf("revoke access tokens: %w", err)
 	}
 	return nil
 }

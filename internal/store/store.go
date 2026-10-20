@@ -99,6 +99,9 @@ func (s *Store) now() time.Time {
 	return fn()
 }
 
+// Now is the store clock, for callers that compare against stored timestamps.
+func (s *Store) Now() time.Time { return s.now() }
+
 // SetClock replaces the clock. Tests only.
 func (s *Store) SetClock(fn func() time.Time) {
 	s.mu.Lock()

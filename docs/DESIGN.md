@@ -209,26 +209,45 @@ plus `SameSite=Lax`. No per-form tokens.
 
 ## 6. OIDC surface
 
-Discovery: `/.well-known/openid-configuration`, plus
-`/.well-known/oauth-authorization-server`.
+Discovery: `/.well-known/openid-configuration`. Paths are the protocol library's
+defaults, relative to the issuer; discovery is the authoritative list.
 
 Endpoints:
 
 | Endpoint | Notes |
 |---|---|
-| `/oauth/authorize` | Authorization code + PKCE (S256, required for public clients). |
-| `/oauth/token` | `authorization_code`, `refresh_token`, `client_credentials`. |
-| `/oauth/userinfo` | `sub`, `email`, `email_verified`, `name`, `preferred_username`, `groups`. |
-| `/oauth/jwks` | Active signing keys. |
-| `/oauth/introspect` | RFC 7662, confidential clients only. |
-| `/oauth/revoke` | RFC 7009. |
-| `/oauth/logout` | RP-initiated logout with `id_token_hint` + `post_logout_redirect_uri`. |
-| `/oauth/device_authorization` | Only if device flow is enabled for the app. |
+| `/authorize` | Authorization code only. PKCE S256 required for public clients and for apps with `require_pkce`; `plain` is refused. Responses carry `iss` (RFC 9207). |
+| `/authorize/callback` | Where the login page sends an approved request; issues the code. |
+| `/oauth/token` | `authorization_code`, `refresh_token`. Client auth: `client_secret_basic`, `client_secret_post`, or `none` for public clients. |
+| `/userinfo` | `sub`; `name`, `preferred_username`, `updated_at` with `profile`; `email`, `email_verified` with `email`. |
+| `/keys` | Published signing keys, public halves only. |
+| `/oauth/introspect` | RFC 7662. The client must authenticate and may only introspect its own tokens. |
+| `/revoke` | RFC 7009. Revoking a refresh token ends the whole grant, including its access tokens. |
+| `/end_session` | RP-initiated logout. Signs the browser out only for a valid `id_token_hint` naming the signed-in user. |
 
-Supported scopes: `openid`, `profile`, `email`, `groups`, `offline_access`.
-Access tokens are JWTs (`RS256` or `ES256`, chosen at key generation) with
-`iss`, `sub`, `aud`, `exp`, `iat`, `auth_time`, `amr`, `acr`, `sid`, `scope`,
-`client_id`. ID tokens carry `nonce` when the client sent one.
+Not offered yet, and not advertised: `client_credentials`, the device flow,
+`/.well-known/oauth-authorization-server`, the `groups` scope, private_key_jwt.
+
+Supported scopes: `openid` (required), `profile`, `email`, `offline_access`. A request is
+narrowed to the scopes the app is registered for; `offline_access` needs the
+`refresh_token` grant.
+
+`sub` is the numeric account ID, so a rename does not create a new identity at every
+app. Access tokens are opaque (an encrypted token ID under a key derived from the master
+key), backed by an `access_tokens` row that carries scope, expiry and revocation;
+resource servers use `userinfo` or introspection. ID tokens (`RS256` or `ES256`, chosen
+at key generation) carry `iss`, `sub`, `aud`, `azp`, `exp`, `iat`, `auth_time`, `amr`,
+`acr`, `nonce` when sent, `at_hash`, `c_hash`, and the profile/email claims of the
+granted scopes.
+
+Token rules enforced in `internal/store`:
+
+- An authorization code is redeemed once, at the first step of the exchange; a failed
+  exchange burns it, and a second redemption revokes every token issued from it.
+- A request yields one code. Pending requests expire after 15 minutes.
+- Refresh tokens rotate on every use. Presenting a rotated token revokes the family.
+- A password change or a disabled account revokes refresh and access tokens.
+- `store.CanUseApp` is asked again on every refresh, userinfo and introspection call.
 
 Client compatibility constraints, from the current fleet:
 
@@ -313,9 +332,9 @@ app's policy is `open`, the fact that any active user may sign in.
 
 | Stage | Content | State |
 |---|---|---|
-| 0 | Research: IdP landscape, client inventory, library verification | done, except the Go protocol-library review |
-| 1 | Repo skeleton, config, SQLite schema, version, Makefile, licence, docs | in progress |
-| 2 | OIDC provider core on the chosen library — discovery, authorize, token, JWKS, userinfo | pending library review |
+| 0 | Research: IdP landscape, client inventory, library verification | done |
+| 1 | Repo skeleton, config, SQLite schema, version, Makefile, licence, docs | done |
+| 2 | OIDC provider core on the chosen library — discovery, authorize, token, JWKS, userinfo, introspect, revoke, end_session | done; end-to-end tests in `internal/api/oidc_test.go` |
 | 3 | Product layer: setup flow, sessions, password/TOTP/magic link, UI shell, i18n | |
 | 4 | Passkeys, account and session management | |
 | 5 | Apps, owners, groups, registration policies, access requests | |

@@ -18,8 +18,10 @@ Licence: MIT.
 
 ## Status
 
-Early development. The configuration, storage, session and credential layers are
-in place; the OIDC provider endpoints are next. See [docs/DESIGN.md](docs/DESIGN.md)
+Early development. The configuration, storage, session and credential layers and
+the OIDC provider core (authorization code with PKCE, refresh-token rotation,
+userinfo, introspection, revocation, RP-initiated logout) are in place; the sign-in
+UI and app administration are next. See [docs/DESIGN.md](docs/DESIGN.md)
 for the design and the build order.
 
 ## Quick start

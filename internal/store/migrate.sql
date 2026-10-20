@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS apps (
     -- Empty for public clients.
     client_secret_hash TEXT NOT NULL DEFAULT '',
     secret_rotated_at  TEXT NOT NULL DEFAULT '',
-    -- confidental | public
+    -- confidential | public
     client_type   TEXT    NOT NULL DEFAULT 'confidential',
     -- client_secret_basic | client_secret_post | none
     token_endpoint_auth_method TEXT NOT NULL DEFAULT 'client_secret_basic',
@@ -205,7 +205,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS auth_requests (
     id                    TEXT PRIMARY KEY,
     app_id                INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    user_id               INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id               INTEGER REFERENCES users(id) ON DELETE CASCADE,
     redirect_uri          TEXT    NOT NULL,
     scope                 TEXT    NOT NULL,
     nonce                 TEXT    NOT NULL DEFAULT '',
@@ -218,11 +218,20 @@ CREATE TABLE IF NOT EXISTS auth_requests (
     amr                   TEXT    NOT NULL DEFAULT '',
     acr                   TEXT    NOT NULL DEFAULT '',
     sid                   TEXT    NOT NULL DEFAULT '',
+    -- What the client asked for about re-authentication: the prompt values,
+    -- max_age in seconds (-1 when absent) and the requested ACR values.
+    prompt                TEXT    NOT NULL DEFAULT '',
+    max_age               INTEGER NOT NULL DEFAULT -1,
+    acr_values            TEXT    NOT NULL DEFAULT '',
     expires_at            TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS auth_codes (
     code_hash             TEXT PRIMARY KEY,
+    -- The request the code was issued from. It outlives the request row, which
+    -- is deleted on exchange, so a replay can still revoke the tokens minted
+    -- from this code.
+    auth_request_id       TEXT    NOT NULL DEFAULT '',
     app_id                INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     user_id               INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     redirect_uri          TEXT    NOT NULL,
@@ -249,6 +258,12 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     family_id      TEXT    NOT NULL,
     scope          TEXT    NOT NULL,
     resource       TEXT    NOT NULL DEFAULT '',
+    -- Carried over from the original authorization so refreshed ID tokens keep
+    -- saying when and how the user authenticated.
+    auth_request_id TEXT   NOT NULL DEFAULT '',
+    auth_time      TEXT    NOT NULL DEFAULT '',
+    amr            TEXT    NOT NULL DEFAULT '',
+    acr            TEXT    NOT NULL DEFAULT '',
     created_at     TEXT    NOT NULL,
     expires_at     TEXT    NOT NULL,
     rotated_at     TEXT    NOT NULL DEFAULT '',
@@ -258,6 +273,27 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_family ON refresh_tokens(family_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+-- Access tokens are opaque and encrypted, but the provider still needs to know
+-- their scope, lifetime and revocation state. The row is keyed by the random
+-- token ID embedded in the ciphertext, never by the token itself.
+CREATE TABLE IF NOT EXISTS access_tokens (
+    token_id        TEXT    PRIMARY KEY,
+    app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    scope           TEXT    NOT NULL DEFAULT '',
+    auth_request_id TEXT    NOT NULL DEFAULT '',
+    created_at      TEXT    NOT NULL,
+    expires_at      TEXT    NOT NULL,
+    revoked_at      TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_access_tokens_user ON access_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_auth_request ON access_tokens(auth_request_id);
+CREATE INDEX IF NOT EXISTS idx_access_tokens_expires ON access_tokens(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_auth_codes_expires ON auth_codes(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_requests_expires ON auth_requests(expires_at);
 
 -- OpenID Connect session tracking, so logout can notify the right clients.
 CREATE TABLE IF NOT EXISTS oidc_sessions (
