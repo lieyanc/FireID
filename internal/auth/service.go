@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lieyanc/FireID/internal/secretbox"
@@ -26,13 +27,20 @@ const HostSessionCookie = "__Host-fireid_session"
 
 // Service wires the credential checks to the store.
 type Service struct {
-	store  *store.Store
-	box    *secretbox.Box
-	cfg    Config
-	log    *slog.Logger
-	login  *Throttle
-	setup  string
-	issuer string
+	store *store.Store
+	box   *secretbox.Box
+	cfg   Config
+	log   *slog.Logger
+	login *Throttle
+	// mailAddr and mailIP limit how many sign-in emails go to one address
+	// and are requested from one source.
+	mailAddr *Throttle
+	mailIP   *Throttle
+	mailer   Mailer
+	setup    string
+	issuer   string
+	// mailWG tracks deliveries in flight, so tests can wait for them.
+	mailWG sync.WaitGroup
 
 	now func() time.Time
 }
@@ -67,7 +75,12 @@ func New(st *store.Store, box *secretbox.Box, cfg Config, log *slog.Logger) (*Se
 		cfg:   cfg,
 		log:   log,
 		login: NewThrottle(ThrottleOptions{}),
-		now:   func() time.Time { return time.Now().UTC() },
+		// Each email counts as it is sent, and the one that crosses the free
+		// allowance still goes out: three per address, ten per source, then
+		// a lockout that doubles.
+		mailAddr: NewThrottle(ThrottleOptions{Free: 2}),
+		mailIP:   NewThrottle(ThrottleOptions{Free: 9}),
+		now:      func() time.Time { return time.Now().UTC() },
 	}
 	if err := s.refreshSetupToken(); err != nil {
 		return nil, err
@@ -123,12 +136,34 @@ var ErrSecondFactorRequired = errors.New("second factor required")
 // factor the account has not enrolled.
 var ErrSecondFactorNotConfigured = errors.New("second factor is required but not enrolled")
 
-// loginResult is what a credential check produces before a session exists.
+// SecondFactorError reports a correct first factor that is not enough on its
+// own. It matches ErrSecondFactorRequired, and also ErrSecondFactorNotConfigured
+// when the account still has to enrol.
+type SecondFactorError struct {
+	User  *store.User
+	Enrol bool
+}
+
+func (e *SecondFactorError) Error() string {
+	if e.Enrol {
+		return ErrSecondFactorNotConfigured.Error()
+	}
+	return ErrSecondFactorRequired.Error()
+}
+
+func (e *SecondFactorError) Is(target error) bool {
+	return target == ErrSecondFactorRequired || (e.Enrol && target == ErrSecondFactorNotConfigured)
+}
+
+// LoginResult is what a credential check produces before a session exists.
 type LoginResult struct {
 	User *store.User
-	// AMR lists the methods used, e.g. "pwd" or "webauthn".
+	// AMR lists the methods used, e.g. "pwd" or "pwd otp".
 	AMR string
 	ACR string
+	// RecoveryCodes is set when the sign-in also completed a TOTP enrolment.
+	// They are shown to the person once and never stored in plain form.
+	RecoveryCodes []string
 }
 
 // AuthenticatePassword checks a username and password. It never reveals whether
@@ -177,63 +212,10 @@ func (s *Service) AuthenticatePassword(username, password, ip string) (*LoginRes
 	s.login.Reset("acct:" + username)
 
 	if s.needsSecondFactor(user) {
-		if user.TOTPSecretEnc == "" {
-			return nil, ErrSecondFactorNotConfigured
-		}
-		return nil, ErrSecondFactorRequired
+		return nil, &SecondFactorError{User: user, Enrol: !user.TOTPConfirmed}
 	}
 
 	return &LoginResult{User: user, AMR: "pwd", ACR: store.ACRLoA1}, nil
-}
-
-// AuthenticateTOTP completes a password sign-in that requires a second factor.
-// requirePassword must be true when the caller has not yet proven the first
-// factor.
-func (s *Service) AuthenticateTOTP(userID int64, code, ip string, passwordVerified bool) (*LoginResult, error) {
-	if wait := s.login.RetryAfter("totp:" + ip); wait > 0 {
-		return nil, &RateLimitError{RetryAfter: wait}
-	}
-	user, err := s.store.UserByID(userID)
-	if err != nil {
-		return nil, err
-	}
-	if user.Status != store.UserActive {
-		return nil, ErrInvalidCredentials
-	}
-	if !passwordVerified {
-		return nil, ErrInvalidCredentials
-	}
-	secret, err := s.box.OpenString(user.TOTPSecretEnc)
-	if err != nil || secret == "" {
-		return nil, ErrInvalidCredentials
-	}
-	if !VerifyTOTP(secret, code, s.now()) {
-		s.login.Fail("totp:" + ip)
-		return nil, ErrInvalidCredentials
-	}
-	s.login.Reset("totp:" + ip)
-	if !user.TOTPConfirmed {
-		if err := s.store.ConfirmTOTP(user.ID); err != nil {
-			s.log.Warn("could not mark totp confirmed", "userId", user.ID, "err", err)
-		}
-	}
-	amr := "pwd otp"
-	return &LoginResult{User: user, AMR: amr, ACR: store.ACRLoA2}, nil
-}
-
-// needsSecondFactor reports whether policy requires a second factor for this
-// account.
-func (s *Service) needsSecondFactor(user *store.User) bool {
-	if user.Status != store.UserActive {
-		return false
-	}
-	if user.TOTPSecretEnc == "" {
-		// Only the admin policy can demand an unenrolled factor, and that is
-		// reported separately so the UI can send the person to enrolment.
-		return s.cfg.RequireSecondFactorForAdmins && user.IsSuperAdmin
-	}
-	// A configured and confirmed second factor is always required.
-	return user.TOTPConfirmed
 }
 
 // StartSession turns a successful login into a session and returns the cookie
@@ -258,21 +240,22 @@ func (s *Service) SessionUser(r *http.Request) (*store.Session, *store.User, err
 	return s.store.SessionUser(token)
 }
 
-// SessionTokenFromRequest reads the session cookie, accepting either cookie
-// name so a change of cookieDomain does not lock anyone out mid-flight.
+// SessionTokenFromRequest reads the session cookie. Only the configured name
+// is accepted: honouring the plain name as well would let a sibling subdomain
+// plant a cookie and defeat the __Host- prefix.
 func (s *Service) SessionTokenFromRequest(r *http.Request) string {
-	for _, name := range []string{s.cookieName(), SessionCookie, HostSessionCookie} {
-		if c, err := r.Cookie(name); err == nil && c.Value != "" {
-			return c.Value
-		}
+	if c, err := r.Cookie(s.cookieName()); err == nil {
+		return c.Value
 	}
 	return ""
 }
 
-// cookieName is the name to set on new sessions.
+// cookieName is the session cookie's name. A host-only cookie on HTTPS gets
+// the __Host- prefix, which browsers only accept without a Domain, with
+// Secure and with Path=/ — so no other host can set or shadow it.
 func (s *Service) cookieName() string {
-	if s.cfg.CookieDomain != "" {
-		return SessionCookie
+	if s.cfg.CookieDomain == "" && s.cfg.SecureCookies {
+		return HostSessionCookie
 	}
 	return SessionCookie
 }
@@ -294,18 +277,26 @@ func (s *Service) SetSessionCookie(w http.ResponseWriter, token string, expires 
 	})
 }
 
-// ClearSessionCookie removes the cookie.
+// ClearSessionCookie removes the cookie. A host-only HTTPS deployment also
+// clears the plain name, which builds before the __Host- prefix used and
+// which is no longer read.
 func (s *Service) ClearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{
-		Name:     s.cookieName(),
-		Value:    "",
-		Path:     "/",
-		Domain:   s.cfg.CookieDomain,
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   s.cfg.SecureCookies,
-		SameSite: http.SameSiteLaxMode,
-	})
+	names := []string{s.cookieName()}
+	if names[0] != SessionCookie {
+		names = append(names, SessionCookie)
+	}
+	for _, name := range names {
+		http.SetCookie(w, &http.Cookie{
+			Name:     name,
+			Value:    "",
+			Path:     "/",
+			Domain:   s.cfg.CookieDomain,
+			MaxAge:   -1,
+			HttpOnly: true,
+			Secure:   s.cfg.SecureCookies,
+			SameSite: http.SameSiteLaxMode,
+		})
+	}
 }
 
 // SignOutByRequest revokes the session the request carries.

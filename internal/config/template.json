@@ -2,7 +2,8 @@
   "server": {
     "host": "127.0.0.1",
     "port": 8099,
-    "publicUrl": ""
+    "publicUrl": "",
+    "trustProxyHeaders": false
   },
   "auth": {
     "sessionTtl": 604800,

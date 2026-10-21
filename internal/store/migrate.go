@@ -11,7 +11,7 @@ var schemaSQL string
 
 // schemaVersion is bumped whenever incrementalColumns grows, so an operator can
 // tell from the database which build last touched it.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // incrementalColumns are added to existing tables on upgrade. Adding a column
 // here (rather than editing migrate.sql) is what keeps old databases working.
@@ -31,6 +31,10 @@ var incrementalColumns = []struct {
 	{"auth_requests", "prompt", "TEXT NOT NULL DEFAULT ''"},
 	{"auth_requests", "max_age", "INTEGER NOT NULL DEFAULT -1"},
 	{"auth_requests", "acr_values", "TEXT NOT NULL DEFAULT ''"},
+	// v3: TOTP replay protection, and typed codes for emailed sign-in tokens.
+	{"users", "totp_last_step", "INTEGER NOT NULL DEFAULT 0"},
+	{"credential_tokens", "code_hash", "TEXT NOT NULL DEFAULT ''"},
+	{"credential_tokens", "attempts", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // incrementalIndexes cover incremental columns. They run after the columns

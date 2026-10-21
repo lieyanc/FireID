@@ -4,7 +4,8 @@ Fire ID is a self-hosted OpenID Connect provider for a small fleet of personal a
 friend-owned services. One Go binary, SQLite storage, an embedded React admin UI, and
 an nginx `auth_request` endpoint for services that have no login of their own.
 
-Status: design. Protocol layer is not implemented yet — see [§9 Build order](#9-build-order).
+Status: in development — see [§9 Build order](#9-build-order). The UI's JSON API is in
+[api.md](api.md).
 
 ## 1. Goals
 
@@ -62,6 +63,7 @@ cmd/fireid/          entry point: flags, config, wiring, graceful shutdown
 internal/config/     on-disk JSON config + atomic Store
 internal/store/      SQLite: schema, queries, invariants
 internal/auth/       sessions, password/passkey/TOTP/magic-link credentials, throttling
+internal/mail/       SMTP delivery (stdlib net/smtp)
 internal/oidc/       OIDC provider: discovery, authorize, token, JWKS, userinfo, logout
 internal/forwardauth/ nginx auth_request decision endpoint
 internal/api/        HTTP surface for the UI + admin JSON API
@@ -183,8 +185,9 @@ Authentication methods, all usable together:
 | Method | Notes |
 |---|---|
 | Password | argon2id. Optional TOTP second factor. |
+| TOTP | RFC 6238, SHA-1, 6 digits, 30 s, ±1 step. A code is accepted once: the highest used step is stored per account. Ten recovery codes (`xxxxx-xxxxx`, 50 bits each, stored hashed) are issued at enrolment; regenerating replaces them all. |
 | Passkey | WebAuthn, discoverable credentials (username-less), user verification required for `loa:2`. Multiple per account. |
-| Email code / magic link | Single-use token, 10-minute validity, rate-limited per address and per IP. Requires SMTP. |
+| Email code / magic link | One email carries a 6-digit code and a link; either redeems it, once. 10-minute validity, five wrong codes spend it, a new email spends the previous one. Three emails per address and ten per source address before an exponential lockout. Requires SMTP. |
 
 Rules:
 
@@ -194,6 +197,22 @@ Rules:
   starting at 1 minute up to 15 minutes. Unknown usernames still pay a dummy argon2id
   verification so timing does not reveal existence.
 - A user with no password and no passkey can only be reached by magic link.
+- A confirmed TOTP is required after every first factor, email included (`amr` `pwd otp`
+  or `email otp`, `acr` `loa:2`). An enrolment that was started but not confirmed does
+  not count, so it cannot be used to slip past `requireSecondFactorForAdmins`; an
+  account under that policy is led through enrolment on its next password sign-in.
+- Email sign-in reveals nothing about which addresses have accounts: the answer is the
+  same, and the lookup and delivery happen after the response. The link carries its
+  token in the URL fragment, so it never reaches a server log, and the page redeems it
+  only on a button press, because mail scanners open links. Redeeming it proves the
+  address, so it also activates a `pending` account.
+- Turning TOTP on asks for the password again; turning it off or regenerating recovery
+  codes asks for a current code. Each of the three sends a notice to the account's
+  verified address.
+- `requireSecondFactorForAdmins` protects an account only once its enrolment is done.
+  Until then, whoever holds the password can enrol their own authenticator and receive
+  the recovery codes; the notice email is the account holder's only warning. Enrol
+  administrators before relying on the policy.
 - Deleting a credential never deletes the user; the last credential removal is allowed
   only if a recovery path exists (another credential, or a super admin reset).
 
@@ -335,7 +354,7 @@ app's policy is `open`, the fact that any active user may sign in.
 | 0 | Research: IdP landscape, client inventory, library verification | done |
 | 1 | Repo skeleton, config, SQLite schema, version, Makefile, licence, docs | done |
 | 2 | OIDC provider core on the chosen library — discovery, authorize, token, JWKS, userinfo, introspect, revoke, end_session | done; end-to-end tests in `internal/api/oidc_test.go` |
-| 3 | Product layer: setup flow, sessions, password/TOTP/magic link, UI shell, i18n | |
+| 3 | Product layer: setup flow, sessions, password/TOTP/magic link, UI shell, i18n | done; API in [api.md](api.md), tests in `internal/api/signin_test.go` |
 | 4 | Passkeys, account and session management | |
 | 5 | Apps, owners, groups, registration policies, access requests | |
 | 6 | Forward-auth endpoint and the per-site nginx include | |
@@ -349,7 +368,6 @@ Stage 8 is worth doing early for any application that already has login code to 
 
 - Whether to keep the whole protocol layer on `zitadel/oidc`'s OP package or hand-write
   thin handlers over a JOSE library. Awaiting the library review.
-- Recovery codes for TOTP: count and format.
 - Whether per-app access tokens should be audience-restricted to `/userinfo` only, or
   usable as bearer tokens by the apps themselves (a "resource server" mode). v1: tokens
   are for `userinfo` and forward-auth; apps that need their own bearer flow keep using

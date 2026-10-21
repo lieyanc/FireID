@@ -1,4 +1,4 @@
-.PHONY: all web build run dev dev-web test lint clean
+.PHONY: all web build binary run start dev dev-web test lint clean
 
 BIN     ?= bin/fireid
 CONFIG  ?= config.json
@@ -17,11 +17,18 @@ web/node_modules: web/package-lock.json
 web: web/node_modules
 	npm run --prefix web build
 
-build: web
+build: web binary
+
+# Static binary only, embedding whatever is already in web/dist.
+binary:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/fireid
 
 # Full build (UI + binary), then run it.
 run: build
+	./$(BIN) -c $(CONFIG)
+
+# Build the binary without rebuilding the UI, then run it.
+start: binary
 	./$(BIN) -c $(CONFIG)
 
 # Backend with the UI currently in web/dist; run `make dev-web` alongside for hot reload.

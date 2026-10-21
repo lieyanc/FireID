@@ -22,10 +22,12 @@ type User struct {
 	SessionGen    int64
 	TOTPSecretEnc string
 	TOTPConfirmed bool
-	Locale        string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	LastLoginAt   time.Time
+	// TOTPLastStep is the highest time step already accepted.
+	TOTPLastStep int64
+	Locale       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	LastLoginAt  time.Time
 }
 
 // User status values.
@@ -36,14 +38,14 @@ const (
 )
 
 const userColumns = `id, username, email, display_name, status, is_super_admin, password_hash,
-	session_gen, totp_secret_enc, totp_confirmed_at, locale, created_at, updated_at, last_login_at`
+	session_gen, totp_secret_enc, totp_confirmed_at, totp_last_step, locale, created_at, updated_at, last_login_at`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
 	var superAdmin int
 	var totpConfirmed, createdAt, updatedAt, lastLogin string
 	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Status, &superAdmin,
-		&u.PasswordHash, &u.SessionGen, &u.TOTPSecretEnc, &totpConfirmed, &u.Locale,
+		&u.PasswordHash, &u.SessionGen, &u.TOTPSecretEnc, &totpConfirmed, &u.TOTPLastStep, &u.Locale,
 		&createdAt, &updatedAt, &lastLogin)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -232,32 +234,6 @@ func (s *Store) BumpSessionGen(userID int64) error {
 	})
 }
 
-// SetTOTPSecret stores the encrypted shared secret. An empty value clears TOTP
-// and confirms nothing.
-func (s *Store) SetTOTPSecret(userID int64, encrypted string) error {
-	confirmed := ""
-	if encrypted != "" {
-		// A newly stored secret is unconfirmed until a code verifies.
-		confirmed = ""
-	}
-	_, err := s.db.Exec(`UPDATE users SET totp_secret_enc = ?, totp_confirmed_at = ?, updated_at = ?
-		WHERE id = ?`, encrypted, confirmed, s.nowText(), userID)
-	if err != nil {
-		return fmt.Errorf("set totp secret: %w", err)
-	}
-	return nil
-}
-
-// ConfirmTOTP marks the stored secret as verified by a working code.
-func (s *Store) ConfirmTOTP(userID int64) error {
-	_, err := s.db.Exec(`UPDATE users SET totp_confirmed_at = ?, updated_at = ?
-		WHERE id = ? AND totp_secret_enc <> ''`, s.nowText(), s.nowText(), userID)
-	if err != nil {
-		return fmt.Errorf("confirm totp: %w", err)
-	}
-	return nil
-}
-
 // ListUsers returns accounts ordered by creation, newest first. limit ≤ 0 means
 // no limit.
 func (s *Store) ListUsers(limit, offset int) ([]*User, error) {
@@ -293,6 +269,3 @@ func NormaliseUsername(username string) string {
 func NormaliseEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
-
-// NormaliseEmail preserves the local part's case in the display form but stores
-// a lower-cased address. Comparison is always against the stored form.

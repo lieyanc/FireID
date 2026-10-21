@@ -1,0 +1,133 @@
+import { defineMessages } from "@/i18n/define"
+
+export const account = defineMessages({
+  en: {
+    title: "Your account",
+    profile: {
+      title: "Profile",
+      username: "Username",
+      email: "Email",
+      verified: "Verified",
+      unverified: "Not verified",
+      superAdmin: "Super admin",
+      lastSignIn: "Last sign-in",
+      memberSince: "Member since",
+    },
+    session: {
+      title: "This session",
+      description: "How you signed in on this device.",
+      methods: "Sign-in methods",
+      level: "Strength",
+      expires: "Expires",
+      acr: {
+        "loa:1": "Single factor",
+        "loa:2": "Two factors",
+      },
+      amr: {
+        pwd: "Password",
+        otp: "One-time code",
+        email: "Email",
+      },
+    },
+    twoStep: {
+      title: "Two-step verification",
+      description:
+        "Ask for a code from an authenticator app each time you sign in.",
+      on: "On",
+      off: "Off",
+      onHint:
+        "Signing in needs your authenticator app or one of your recovery codes.",
+      offHint: "Add a second step so a password alone is not enough.",
+      enable: "Turn on",
+      disable: "Turn off",
+      regenerate: "New recovery codes",
+      enableTitle: "Turn on two-step verification",
+      passwordPrompt: "Enter your password to continue.",
+      wrongPassword: "Incorrect password.",
+      noPasswordPrompt:
+        "You will link an authenticator app to your account, then save recovery codes.",
+      enableSubmit: "Turn on",
+      enableSubmitting: "Turning on…",
+      enabled: "Two-step verification is on",
+      disableTitle: "Turn off two-step verification",
+      disableDescription:
+        "Enter a code from your authenticator app or a recovery code. Your recovery codes stop working too.",
+      disableSubmit: "Turn off",
+      disableSubmitting: "Turning off…",
+      disabled: "Two-step verification is off",
+      policy:
+        "Your administrator requires two-step verification for this account, so it cannot be turned off.",
+      regenerateTitle: "Create new recovery codes",
+      regenerateDescription:
+        "Enter a code from your authenticator app or a recovery code. Your current recovery codes stop working.",
+      regenerateSubmit: "Create codes",
+      regenerateSubmitting: "Creating…",
+      regenerated: "New recovery codes created",
+      codesLeft: "Recovery codes left: {count}",
+      codesLow:
+        "You are running low on recovery codes. Create new ones so you are not locked out.",
+    },
+  },
+  zh: {
+    title: "我的账户",
+    profile: {
+      title: "个人资料",
+      username: "用户名",
+      email: "邮箱",
+      verified: "已验证",
+      unverified: "未验证",
+      superAdmin: "超级管理员",
+      lastSignIn: "上次登录",
+      memberSince: "注册时间",
+    },
+    session: {
+      title: "当前会话",
+      description: "你在此设备上的登录方式。",
+      methods: "登录方式",
+      level: "验证强度",
+      expires: "过期时间",
+      acr: {
+        "loa:1": "单因素",
+        "loa:2": "双因素",
+      },
+      amr: {
+        pwd: "密码",
+        otp: "一次性验证码",
+        email: "邮箱",
+      },
+    },
+    twoStep: {
+      title: "两步验证",
+      description: "每次登录时，还需输入身份验证器应用中的验证码。",
+      on: "已开启",
+      off: "未开启",
+      onHint: "登录时需要身份验证器应用或恢复码。",
+      offHint: "开启后，仅凭密码无法登录你的账户。",
+      enable: "开启",
+      disable: "关闭",
+      regenerate: "重新生成恢复码",
+      enableTitle: "开启两步验证",
+      passwordPrompt: "请输入密码以继续。",
+      wrongPassword: "密码错误。",
+      noPasswordPrompt: "你将为账户绑定身份验证器应用，然后保存恢复码。",
+      enableSubmit: "开启",
+      enableSubmitting: "开启中…",
+      enabled: "两步验证已开启",
+      disableTitle: "关闭两步验证",
+      disableDescription:
+        "输入身份验证器应用中的验证码或一个恢复码。关闭后，恢复码也将失效。",
+      disableSubmit: "确认关闭",
+      disableSubmitting: "正在关闭…",
+      disabled: "两步验证已关闭",
+      policy: "管理员要求此账户开启两步验证，因此无法关闭。",
+      regenerateTitle: "重新生成恢复码",
+      regenerateDescription:
+        "输入身份验证器应用中的验证码或一个恢复码。现有恢复码将全部失效。",
+      regenerateSubmit: "生成",
+      regenerateSubmitting: "生成中…",
+      regenerated: "已生成新的恢复码",
+      codesLeft: "剩余恢复码：{count} 个",
+      codesLow: "恢复码快用完了，请重新生成，以免无法登录。",
+    },
+  },
+})

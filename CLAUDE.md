@@ -32,7 +32,8 @@ internal/secretbox/ AES-256-GCM for values that must be readable at runtime
 internal/store/     SQLite schema, queries, and the access decision
 internal/auth/      passwords, TOTP, sessions, throttling, setup token
 internal/api/       HTTP surface: JSON API, middleware, embedded UI
-internal/oidc/      OIDC provider endpoints (to be built)
+internal/oidc/      OIDC provider on zitadel/oidc pkg/op
+internal/mail/      SMTP delivery
 web/                React UI, embedded into the binary
 client/             separate module: OIDC client + trusted-header middleware
 docs/               design and operational notes

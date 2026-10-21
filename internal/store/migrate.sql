@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS users (
     -- Encrypted TOTP shared secret; empty until TOTP enrolment starts.
     totp_secret_enc  TEXT    NOT NULL DEFAULT '',
     totp_confirmed_at TEXT   NOT NULL DEFAULT '',
+    -- Highest TOTP time step accepted so far; a code is never accepted twice.
+    totp_last_step   INTEGER NOT NULL DEFAULT 0,
     locale           TEXT    NOT NULL DEFAULT '',
     created_at       TEXT    NOT NULL,
     updated_at       TEXT    NOT NULL,
@@ -63,6 +65,11 @@ CREATE TABLE IF NOT EXISTS credential_tokens (
     -- email_verify | magic_link | password_reset | invite
     purpose    TEXT    NOT NULL,
     token_hash TEXT    NOT NULL UNIQUE,
+    -- Hash of the short code sent alongside the link, for tokens a person may
+    -- type instead of click. Wrong guesses are counted; the token is spent
+    -- when they run out.
+    code_hash  TEXT    NOT NULL DEFAULT '',
+    attempts   INTEGER NOT NULL DEFAULT 0,
     email      TEXT    NOT NULL DEFAULT '',
     expires_at TEXT    NOT NULL,
     used_at    TEXT    NOT NULL DEFAULT '',
@@ -71,6 +78,19 @@ CREATE TABLE IF NOT EXISTS credential_tokens (
 );
 
 CREATE INDEX IF NOT EXISTS idx_credential_tokens_user ON credential_tokens(user_id, purpose);
+CREATE INDEX IF NOT EXISTS idx_credential_tokens_email ON credential_tokens(email, purpose);
+CREATE INDEX IF NOT EXISTS idx_credential_tokens_expires ON credential_tokens(expires_at);
+
+-- TOTP recovery codes, stored hashed. Each works once; issuing a new set
+-- deletes the old one.
+CREATE TABLE IF NOT EXISTS recovery_codes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash  TEXT    NOT NULL,
+    used_at    TEXT    NOT NULL DEFAULT '',
+    created_at TEXT    NOT NULL,
+    UNIQUE (user_id, code_hash)
+);
 
 -- Group membership drives per-application access.
 CREATE TABLE IF NOT EXISTS groups (

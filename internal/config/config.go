@@ -52,6 +52,11 @@ type ServerConfig struct {
 	// OIDC issuer, so changing it invalidates every issued token and every
 	// registered redirect URI.
 	PublicURL string `json:"publicUrl"`
+	// TrustProxyHeaders honours X-Forwarded-For and X-Forwarded-Proto. Enable
+	// it only when a reverse proxy is the sole way to reach the listener;
+	// otherwise any client can pick the address its sign-in attempts are
+	// throttled under.
+	TrustProxyHeaders bool `json:"trustProxyHeaders"`
 }
 
 // AuthConfig holds session and login-policy settings. Secrets live in the data

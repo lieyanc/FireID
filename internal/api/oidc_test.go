@@ -40,7 +40,10 @@ type oidcEnv struct {
 	ts     *httptest.Server
 	issuer string
 	st     *store.Store
+	auth   *auth.Service
+	mailer *fakeMailer
 	user   *store.User
+	root   *store.User
 
 	// web is a confidential client_secret_post app like new-api.
 	web       *store.App
@@ -53,6 +56,12 @@ type oidcEnv struct {
 }
 
 func newOIDCEnv(t *testing.T) *oidcEnv {
+	t.Helper()
+	return newEnvWith(t, nil)
+}
+
+// newEnvWith is newOIDCEnv with a hook to change the authentication policy.
+func newEnvWith(t *testing.T, tweak func(*auth.Config)) *oidcEnv {
 	t.Helper()
 	ts := httptest.NewUnstartedServer(nil)
 	issuer := "http://" + ts.Listener.Addr().String()
@@ -83,16 +92,24 @@ func newOIDCEnv(t *testing.T) *oidcEnv {
 	t.Cleanup(func() { _ = st.Close() })
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	authSvc, err := auth.New(st, box, auth.Config{SessionTTL: time.Hour, PasswordMinLength: 10}, log)
+	authCfg := auth.Config{SessionTTL: time.Hour, PasswordMinLength: 10}
+	if tweak != nil {
+		tweak(&authCfg)
+	}
+	authSvc, err := auth.New(st, box, authCfg, log)
 	if err != nil {
 		t.Fatal(err)
 	}
+	authSvc.SetIssuer(issuer)
+	mailer := &fakeMailer{enabled: true}
+	authSvc.SetMailer(mailer)
+	t.Cleanup(authSvc.WaitForMail)
 
 	hash, err := auth.HashPassword(testPassword)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := &oidcEnv{t: t, ts: ts, issuer: issuer, st: st}
+	env := &oidcEnv{t: t, ts: ts, issuer: issuer, st: st, auth: authSvc, mailer: mailer}
 	env.user, err = st.CreateUser(store.NewUser{Username: "alice", Email: "alice@example.com",
 		DisplayName: "Alice", PasswordHash: hash, Status: store.UserActive})
 	if err != nil {
@@ -105,6 +122,7 @@ func newOIDCEnv(t *testing.T) *oidcEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
+	env.root = root
 
 	env.web, env.webSecret, err = st.CreateApp(store.NewApp{
 		Slug: "web", Name: "Web", OwnerUserID: root.ID, TEAuthMethod: store.AuthPost,
@@ -215,7 +233,7 @@ func (e *oidcEnv) authorize(c *http.Client, params url.Values, signIn bool) *url
 	}
 	authReqID := loc.Query().Get("auth_req_id")
 	loc = location(e.t, e.get(c, loc.String()), http.StatusFound)
-	if loc.Path == "/" {
+	if loc.Path == "/sign-in" {
 		if !signIn {
 			e.t.Fatalf("login required but signIn is false")
 		}
@@ -422,7 +440,7 @@ func TestOIDCCodeFlowConfidential(t *testing.T) {
 		p.Set("prompt", "login")
 		loc := location(t, e.get(c, "/authorize?"+url.Values{"response_type": {"code"}}.Encode()+"&"+p.Encode()), http.StatusFound)
 		loc = location(t, e.get(c, loc.String()), http.StatusFound)
-		if loc.Path != "/" {
+		if loc.Path != "/sign-in" || loc.Query().Get("reauth") != "1" {
 			t.Fatalf("prompt=login skipped the sign-in: %s", loc)
 		}
 	})

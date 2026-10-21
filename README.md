@@ -20,8 +20,9 @@ Licence: MIT.
 
 Early development. The configuration, storage, session and credential layers and
 the OIDC provider core (authorization code with PKCE, refresh-token rotation,
-userinfo, introspection, revocation, RP-initiated logout) are in place; the sign-in
-UI and app administration are next. See [docs/DESIGN.md](docs/DESIGN.md)
+userinfo, introspection, revocation, RP-initiated logout) and the sign-in product
+(setup, password, TOTP with recovery codes, email code / magic link, an English and
+Chinese web UI) are in place; passkeys and account management are next. See [docs/DESIGN.md](docs/DESIGN.md)
 for the design and the build order.
 
 ## Quick start
@@ -66,7 +67,8 @@ file is enough; missing fields are filled from the template on start.
 
 ```json
 {
-  "server": { "host": "127.0.0.1", "port": 8099, "publicUrl": "https://id.example.com" },
+  "server": { "host": "127.0.0.1", "port": 8099, "publicUrl": "https://id.example.com",
+              "trustProxyHeaders": true },
   "auth": { "registration": "closed", "passwordMinLength": 10 },
   "oidc": { "signingAlgorithm": "ES256" },
   "email": { "host": "", "fromEmail": "" },
@@ -77,8 +79,24 @@ file is enough; missing fields are filled from the template on start.
 `auth.registration` is `closed` (invitation only) or `open` (self-registration).
 Each application can override this with its own registration mode.
 
+`server.trustProxyHeaders` makes Fire ID take the client address from the last
+`X-Forwarded-For` entry and the scheme from `X-Forwarded-Proto`. Turn it on only
+when the reverse proxy is the sole way to reach the listener; otherwise a client
+could choose the address its sign-in attempts are throttled under.
+
 Leaving `email.host` empty disables email entirely: addresses cannot be verified
 and magic-link sign-in is unavailable, but passwords and passkeys still work.
+Port 465 uses implicit TLS; other ports use STARTTLS when `email.startTls` is set,
+and credentials are never sent to a remote relay over plaintext.
+
+### Upgrading from a build before Stage 3
+
+- `server.trustProxyHeaders` used to be always on and now defaults to `false`.
+  Behind a reverse proxy, set it to `true`, or every client shares the proxy's
+  address and one person's failed sign-ins lock everyone out. Fire ID logs a
+  warning when it sees forwarded headers it does not trust.
+- On HTTPS without `auth.cookieDomain` the session cookie is now
+  `__Host-fireid_session`; everyone signs in once more after the upgrade.
 
 Secrets are kept out of the configuration file. A 32-byte master key is
 generated on first start into `data/master.key` (mode `0600`) and encrypts TOTP
@@ -114,8 +132,10 @@ WantedBy=multi-user.target
 ## Development
 
 ```sh
+make start      # build bin/fireid with the existing web/dist, then run it
 make dev        # Go backend with the existing web/dist
 make dev-web    # Vite dev server with hot reload, proxying /api
+                # (FIREID_BACKEND, default http://127.0.0.1:8099, must equal server.publicUrl)
 make test       # go vet + go test -race
 make lint       # eslint + tsc
 ```

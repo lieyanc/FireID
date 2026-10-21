@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lieyanc/FireID/internal/auth"
@@ -54,6 +55,9 @@ type Server struct {
 	http         *http.Server
 	listen       net.Listener
 	oidcProvider *oidc.Provider
+	// proxyWarning fires once when forwarded headers arrive but are not
+	// trusted, which usually means server.trustProxyHeaders is missing.
+	proxyWarning sync.Once
 }
 
 // New builds the server and its routes.
@@ -159,6 +163,13 @@ func (s *Server) routes() {
 	h("POST /api/auth/logout", s.logout)
 	h("GET /api/auth/me", s.me)
 	h("POST /api/auth/login/totp", s.loginTOTP)
+	h("POST /api/auth/login/totp/enrol", s.loginTOTPEnrol)
+	h("POST /api/auth/email/start", s.emailStart)
+	h("POST /api/auth/email/verify", s.emailVerify)
+	h("POST /api/account/totp/enrol", s.guard(false, s.accountTOTPEnrol))
+	h("POST /api/account/totp/confirm", s.guard(false, s.accountTOTPConfirm))
+	h("POST /api/account/totp/disable", s.guard(false, s.accountTOTPDisable))
+	h("POST /api/account/recovery-codes", s.guard(false, s.accountRecoveryCodes))
 	// The provider sends the browser here with a pending authorization
 	// request; the form endpoint is the no-JavaScript sign-in for it.
 	h("GET /login", s.oidcLogin)
@@ -278,6 +289,7 @@ func (s *Server) setupState(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"setupRequired": users == 0 || !hasAdmin,
 		"registration":  s.deps.Auth.RegistrationMode(),
+		"emailLogin":    s.deps.Auth.EmailEnabled(),
 	})
 }
 
@@ -335,8 +347,8 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	s.deps.Auth.ConsumeSetupToken()
 	s.deps.Log.Warn("super administrator created", "userId", user.ID, "username", user.Username)
 
-	token, sess, err := s.deps.Store.CreateSession(user.ID, 7*24*time.Hour,
-		s.clientIP(r), r.UserAgent(), "pwd", store.ACRLoA1)
+	token, sess, err := s.deps.Auth.StartSession(&auth.LoginResult{User: user, AMR: "pwd", ACR: store.ACRLoA1},
+		s.clientIP(r), r.UserAgent())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", "account created, but signing in failed")
 		return
@@ -349,9 +361,8 @@ type loginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Code     string `json:"code"`
-	// UserID is returned by a challenge response and sent back with the code.
-	UserID    int64  `json:"userId"`
-	AuthReqID string `json:"authReqId"` // Optional: for OIDC flow
+	// AuthReqID is set when the sign-in belongs to an authorization request.
+	AuthReqID string `json:"authReqId"`
 }
 
 // login performs a password sign-in, or completes one with a TOTP code.
@@ -364,18 +375,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 	res, err := s.deps.Auth.AuthenticatePassword(req.Username, req.Password, ip)
 	if err != nil {
+		var sf *auth.SecondFactorError
 		switch {
-		case errors.Is(err, auth.ErrSecondFactorRequired), errors.Is(err, auth.ErrSecondFactorNotConfigured):
+		case errors.As(err, &sf):
 			// The password was correct; ask for the second factor.
-			user, lookupErr := s.deps.Store.UserByUsername(req.Username)
-			if lookupErr != nil {
-				fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{
-				"challenge": "totp",
-				"userId":    user.ID,
-			})
+			writeChallenge(w, sf)
 			return
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(req.Username), "ip", ip)
@@ -387,52 +391,103 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.finishLogin(w, r, res, &req)
+	s.finishLogin(w, r, res, req.AuthReqID)
 }
 
-// loginTOTP completes a sign-in that requires a second factor. It is separated
-// from login because the password must be proven again: the client sends both.
+// loginTOTP completes a sign-in that requires a second factor. The password
+// is sent again and checked again: the challenge response is not a substitute
+// for it, and no state is kept between the two requests.
 func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	ip := s.clientIP(r)
-
-	// Re-check the password: the challenge response is not a substitute for it.
-	if _, err := s.deps.Auth.AuthenticatePassword(req.Username, req.Password, ip); err == nil ||
-		!errors.Is(err, auth.ErrSecondFactorRequired) {
-		if err == nil {
-			// TOTP was disabled between requests; the password alone is fine.
-			fail(w, http.StatusConflict, "second_factor_not_required", "this account no longer requires a second factor")
-			return
-		}
-		fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+	user, ok := s.passwordForSecondStep(w, req.Username, req.Password, ip)
+	if !ok {
 		return
 	}
-
-	user, err := s.deps.Store.UserByUsername(req.Username)
+	res, err := s.deps.Auth.AuthenticateTOTP(user, req.Code, ip, "pwd")
 	if err != nil {
-		fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+		s.failSecondFactor(w, err)
 		return
 	}
-	res, err := s.deps.Auth.AuthenticateTOTP(user.ID, req.Code, ip, true)
+	s.finishLogin(w, r, res, req.AuthReqID)
+}
+
+// loginTOTPEnrol starts the TOTP enrolment that policy demands before an
+// account may finish signing in. The first code from the authenticator then
+// goes to loginTOTP, which turns TOTP on and signs in.
+func (s *Server) loginTOTPEnrol(w http.ResponseWriter, r *http.Request) {
+	var req loginRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, ok := s.passwordForSecondStep(w, req.Username, req.Password, s.clientIP(r))
+	if !ok {
+		return
+	}
+	if user.TOTPConfirmed {
+		fail(w, http.StatusConflict, "totp_enabled", "two-step verification is already on; sign in with a code")
+		return
+	}
+	secret, uri, err := s.deps.Auth.BeginEnrolment(user)
 	if err != nil {
-		switch {
-		case errors.Is(err, auth.ErrInvalidCredentials):
-			fail(w, http.StatusUnauthorized, "invalid_code", "that code is not valid")
-		default:
-			s.failFromAuth(w, err)
-		}
+		s.failSecondFactor(w, err)
 		return
 	}
-	s.finishLogin(w, r, res, &req)
+	writeJSON(w, http.StatusOK, map[string]any{"secret": secret, "uri": uri})
+}
+
+// passwordForSecondStep re-checks a password whose account needs a second
+// step, and returns that account. Anything else is answered here.
+func (s *Server) passwordForSecondStep(w http.ResponseWriter, username, password, ip string) (*store.User, bool) {
+	_, err := s.deps.Auth.AuthenticatePassword(username, password, ip)
+	var sf *auth.SecondFactorError
+	switch {
+	case errors.As(err, &sf):
+		return sf.User, true
+	case err == nil:
+		// The second factor was turned off between the two requests.
+		fail(w, http.StatusConflict, "second_factor_not_required", "this account no longer requires a second factor")
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
+		fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
+	default:
+		s.failFromAuth(w, err)
+	}
+	return nil, false
+}
+
+// writeChallenge tells the UI which second step comes next.
+func writeChallenge(w http.ResponseWriter, sf *auth.SecondFactorError) {
+	challenge := "totp"
+	if sf.Enrol {
+		challenge = "totp_enrol"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"challenge": challenge})
+}
+
+// failSecondFactor maps a failed second step onto a response.
+func (s *Server) failSecondFactor(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		fail(w, http.StatusUnauthorized, "invalid_code", "that code is not valid")
+	case errors.Is(err, auth.ErrTOTPEnabled):
+		fail(w, http.StatusConflict, "totp_enabled", err.Error())
+	case errors.Is(err, auth.ErrTOTPNotPending):
+		fail(w, http.StatusConflict, "totp_not_pending", err.Error())
+	case errors.Is(err, auth.ErrTOTPNotEnabled):
+		fail(w, http.StatusConflict, "totp_not_enabled", err.Error())
+	default:
+		s.failFromAuth(w, err)
+	}
 }
 
 // finishLogin issues the session cookie and returns the account. When the
 // sign-in belongs to an authorization request, the response also says where the
 // browser goes next.
-func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.LoginResult, req *loginRequest) {
+func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.LoginResult, authReqID string) {
 	token, sess, err := s.deps.Auth.StartSession(res, s.clientIP(r), r.UserAgent())
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", "could not start a session")
@@ -443,8 +498,11 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.L
 		"amr", res.AMR, "ip", s.clientIP(r))
 
 	resp := map[string]any{"user": publicUser(res.User)}
-	if req.AuthReqID != "" {
-		d, err := s.oidcProvider.Continue(req.AuthReqID, sess, res.User, true)
+	if len(res.RecoveryCodes) > 0 {
+		resp["recoveryCodes"] = res.RecoveryCodes
+	}
+	if authReqID != "" {
+		d, err := s.oidcProvider.Continue(authReqID, sess, res.User, true)
 		switch {
 		case errors.Is(err, oidc.ErrUnknownRequest):
 			resp["authRequestError"] = "expired"
@@ -489,14 +547,21 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusUnauthorized, "unauthenticated", "sign in to continue")
 		return
 	}
+	recovery := 0
+	if user.TOTPConfirmed {
+		if recovery, err = s.deps.Store.RecoveryCodesLeft(user.ID); err != nil {
+			s.deps.Log.Error("could not count recovery codes", "userId", user.ID, "err", err)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"user":        publicUser(user),
-		"amr":         strings.Fields(sess.AMR),
-		"acr":         sess.ACR,
-		"sessionId":   sess.ID,
-		"expiresAt":   sess.ExpiresAt,
-		"issuer":      s.deps.PublicBase,
-		"permissions": s.permissions(user),
+		"user":              publicUser(user),
+		"recoveryCodesLeft": recovery,
+		"amr":               strings.Fields(sess.AMR),
+		"acr":               sess.ACR,
+		"sessionId":         sess.ID,
+		"expiresAt":         sess.ExpiresAt,
+		"issuer":            s.deps.PublicBase,
+		"permissions":       s.permissions(user),
 	})
 }
 
@@ -609,15 +674,24 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 func (s *Server) clientIP(r *http.Request) string {
 	if s.deps.TrustProxyHeaders {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// The left-most entry is the client; the rest are proxies.
+			// The right-most entry is the one the trusted proxy added. Entries
+			// to its left came from the client and can say anything.
 			parts := strings.Split(xff, ",")
-			return strings.TrimSpace(parts[0])
+			return strings.TrimSpace(parts[len(parts)-1])
 		}
 		if xr := r.Header.Get("X-Real-IP"); xr != "" {
 			return strings.TrimSpace(xr)
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if !s.deps.TrustProxyHeaders && r.Header.Get("X-Forwarded-For") != "" {
+		if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+			s.proxyWarning.Do(func() {
+				s.deps.Log.Warn("a reverse proxy is forwarding client addresses but server.trustProxyHeaders is off: " +
+					"every client shares the proxy's address for sign-in throttling; set it to true if the proxy is the only way in")
+			})
+		}
+	}
 	if err != nil {
 		return r.RemoteAddr
 	}
@@ -807,7 +881,14 @@ func (s *Server) oidcLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d.NeedLogin {
-		http.Redirect(w, r, "/?login=1&auth_req_id="+url.QueryEscape(authReqID), http.StatusFound)
+		target := "/sign-in?auth_req_id=" + url.QueryEscape(authReqID)
+		if sess != nil {
+			// Signed in, but not recently or strongly enough for this app.
+			// The sign-in page must show the form rather than send the
+			// browser straight back here.
+			target += "&reauth=1"
+		}
+		http.Redirect(w, r, target, http.StatusFound)
 		return
 	}
 	http.Redirect(w, r, d.Redirect, http.StatusFound)
@@ -833,15 +914,13 @@ func (s *Server) oidcLoginPOST(w http.ResponseWriter, r *http.Request) {
 	ip := s.clientIP(r)
 
 	res, err := s.deps.Auth.AuthenticatePassword(username, password, ip)
-	if errors.Is(err, auth.ErrSecondFactorRequired) {
+	var sf *auth.SecondFactorError
+	if errors.As(err, &sf) && !sf.Enrol {
 		if code == "" {
 			http.Error(w, "a second-factor code is required", http.StatusUnauthorized)
 			return
 		}
-		var user *store.User
-		if user, err = s.deps.Store.UserByUsername(username); err == nil {
-			res, err = s.deps.Auth.AuthenticateTOTP(user.ID, code, ip, true)
-		}
+		res, err = s.deps.Auth.AuthenticateTOTP(sf.User, code, ip, "pwd")
 	}
 	if err != nil {
 		var limited *auth.RateLimitError
@@ -850,7 +929,7 @@ func (s *Server) oidcLoginPOST(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(limited.RetryAfter.Seconds())+1))
 			http.Error(w, "too many attempts, try again later", http.StatusTooManyRequests)
 		case errors.Is(err, auth.ErrSecondFactorNotConfigured):
-			http.Error(w, "this account must enrol a second factor before signing in to applications", http.StatusForbidden)
+			http.Error(w, "this account must set up two-step verification in the Fire ID web interface first", http.StatusForbidden)
 		case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, store.ErrNotFound):
 			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
 			http.Error(w, "invalid username, password or code", http.StatusUnauthorized)

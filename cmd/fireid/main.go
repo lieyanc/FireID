@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/lieyanc/FireID/internal/api"
 	"github.com/lieyanc/FireID/internal/auth"
 	"github.com/lieyanc/FireID/internal/config"
+	"github.com/lieyanc/FireID/internal/mail"
 	"github.com/lieyanc/FireID/internal/secretbox"
 	"github.com/lieyanc/FireID/internal/store"
 	"github.com/lieyanc/FireID/internal/version"
@@ -92,7 +94,7 @@ func main() {
 		CookieDomain:                 cfg.Auth.CookieDomain,
 		PasswordMinLength:            cfg.Auth.PasswordMinLength,
 		RequireSecondFactorForAdmins: cfg.Auth.RequireSecondFactorForAdmins,
-		SecureCookies:                cfg.Auth.Recovery == false && len(publicBase) > 8 && publicBase[:8] == "https://",
+		SecureCookies:                strings.HasPrefix(publicBase, "https://"),
 		Registration:                 cfg.Auth.Registration,
 	}, slog.Default())
 	if err != nil {
@@ -100,6 +102,7 @@ func main() {
 		os.Exit(1)
 	}
 	authSvc.SetIssuer(publicBase)
+	authSvc.SetMailer(mail.NewSMTP(func() config.EmailConfig { return cfgStore.Get().Email }))
 
 	slog.Info("configuration loaded", "version", version.Version, "configPath", *cfgPath,
 		"dataDir", cfgStore.DataDir(), "issuer", publicBase)
@@ -119,7 +122,7 @@ func main() {
 		Log:               slog.Default(),
 		Web:               web.FS(),
 		PublicBase:        publicBase,
-		TrustProxyHeaders: true,
+		TrustProxyHeaders: cfg.Server.TrustProxyHeaders,
 		Started:           start,
 		SetLogLevel:       setLogLevel,
 	})
@@ -184,6 +187,7 @@ func housekeeping(ctx context.Context, st *store.Store) {
 				{"authorization codes", st.DeleteExpiredAuthCodes},
 				{"access tokens", st.DeleteExpiredAccessTokens},
 				{"refresh tokens", st.DeleteExpiredRefreshTokens},
+				{"email sign-in tokens", st.DeleteExpiredCredentialTokens},
 			} {
 				if n, err := job.run(); err != nil {
 					slog.Warn("could not delete expired "+job.what, "err", err)
