@@ -417,7 +417,7 @@ list or search the directory.
 | 5 | Apps, owners, groups, registration policies, access requests | done; API in [api.md](api.md#administration), tests in `internal/api/admin_test.go` |
 | 6 | Forward-auth endpoint and the per-site nginx include | done; guide in [forward-auth.md](forward-auth.md), tests in `internal/api/forward_test.go` |
 | 7 | Audit log, signing-key rotation, back-channel logout | done; API in [api.md](api.md#audit-log), tests in `internal/api/audit_test.go`, `keys_test.go`, `backchannel_test.go` |
-| 8 | `client/` module: OIDC client with real id_token verification, trusted-header middleware | |
+| 8 | `client/` module: OIDC client with real id_token verification, trusted-header middleware | done; guide in [client/README.md](../client/README.md), tests in `client/` and `internal/api/client_test.go` |
 | 9 | OpenID conformance-suite run, hardening pass, release pipeline | |
 
 Stage 8 is worth doing early for any application that already has login code to retire.

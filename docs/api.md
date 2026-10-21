@@ -393,6 +393,10 @@ capped at 200. `nextBefore` is the smallest `id` of a full page — pass it as
 and `detail` are `null` when absent or since deleted. A non-numeric `user`,
 `before` or `limit` is `400 invalid`.
 
+The per-app view shows the same fields as the global one, including the source
+address and user agent of that app's sign-in refusals — an app's managers see
+them in their own server logs anyway.
+
 Severity is `info`, `warning` or `critical`; `actorType` is `user`, `admin`,
 `system` or `client`. Rows are kept for 180 days. Recording is best effort — a
 failed write is logged and never fails the action — and `detail` never holds a
@@ -402,7 +406,7 @@ secret: no password, code, token or attempted username.
 |---|---|---|
 | `setup.complete` | info | the first super admin was created |
 | `auth.sign_in` | info | a sign-in finished; detail `{method, amr}`, `method` is `password`, `passkey` or `email` |
-| `auth.sign_in_failed` | warning | credentials were refused; detail `{method, reason}`, `user` set when the attempt named an account |
+| `auth.sign_in_failed` | warning | credentials were refused; detail `{method, reason}` with `reason` such as `unknown_account`, `wrong_password`, `wrong_code`, `unknown_credential`; `user` set when the attempt named an account. Attempts refused by throttling are covered by `auth.locked`, not logged one by one |
 | `auth.locked` | warning | throttling locked out a source or an account; detail `{method, scope, lockoutSeconds}` |
 | `auth.sign_out` | info | the person signed out; detail `{via: "rp_logout"}` and the app when an app's `/end_session` did it |
 | `account.password_change`, `account.totp_enable`, `account.totp_disable`, `account.recovery_codes`, `account.passkey_add`, `account.passkey_remove`, `account.update`, `account.session_revoke`, `account.sessions_revoke_others` | info | the account holder changed their own account |

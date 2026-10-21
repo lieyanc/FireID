@@ -26,7 +26,8 @@ Chinese web UI) are in place, as are passkeys and self-service account managemen
 (profile, password change, active sessions), app administration (apps with
 delegated owners, members, groups, access requests), forward auth for sites
 without a login of their own, the audit log, signing-key rotation and
-back-channel logout. Next: the `client/` module for Go applications. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the
+back-channel logout, and the [`client/`](client/README.md) module for Go applications.
+Next: an OpenID conformance run, a hardening pass and the release pipeline. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the
 build order.
 
 ## Quick start
@@ -68,6 +69,13 @@ To put a site that has no login behind Fire ID, register
 nginx snippets from the app's *Forward auth* card. See
 [docs/forward-auth.md](docs/forward-auth.md) for a complete example and the header
 rules that must be followed.
+
+### Go applications
+
+[`github.com/lieyanc/FireID/client`](client/README.md) is a separate,
+standard-library-only module: OIDC login handlers with real ID-token
+verification, a back-channel logout receiver, and middleware that reads the
+forward-auth identity headers from the proxy only.
 
 ## Configuration
 
