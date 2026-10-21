@@ -292,6 +292,9 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
     auth_time      TEXT    NOT NULL DEFAULT '',
     amr            TEXT    NOT NULL DEFAULT '',
     acr            TEXT    NOT NULL DEFAULT '',
+    -- The browser session's public ID (sessions.sid), so a refreshed ID token
+    -- names the same session as the first one.
+    sid            TEXT    NOT NULL DEFAULT '',
     created_at     TEXT    NOT NULL,
     expires_at     TEXT    NOT NULL,
     rotated_at     TEXT    NOT NULL DEFAULT '',
@@ -323,16 +326,37 @@ CREATE INDEX IF NOT EXISTS idx_access_tokens_expires ON access_tokens(expires_at
 CREATE INDEX IF NOT EXISTS idx_auth_codes_expires ON auth_codes(expires_at);
 CREATE INDEX IF NOT EXISTS idx_auth_requests_expires ON auth_requests(expires_at);
 
--- OpenID Connect session tracking, so logout can notify the right clients.
-CREATE TABLE IF NOT EXISTS oidc_sessions (
-    sid        TEXT    PRIMARY KEY,
+-- The apps a browser session has signed in to, so ending the session can tell
+-- each of them (OpenID Connect Back-Channel Logout). Written when the login
+-- page approves an authorization request.
+CREATE TABLE IF NOT EXISTS session_apps (
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
     app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT    NOT NULL,
-    expires_at TEXT    NOT NULL
+    PRIMARY KEY (session_id, app_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_oidc_sessions_user ON oidc_sessions(user_id);
+-- Pending back-channel logout notifications. A trigger (see migrate.go) adds a
+-- row for every app with a back-channel URI when a session is revoked, in the
+-- same transaction, whatever code path revoked it. A row holds no token; the
+-- worker signs a fresh logout token for each attempt.
+CREATE TABLE IF NOT EXISTS backchannel_outbox (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    -- Not a foreign key: the notification still goes out if the account is
+    -- deleted before it is delivered.
+    user_id         INTEGER NOT NULL,
+    sid             TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL,
+    next_attempt_at TEXT    NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_backchannel_outbox_due ON backchannel_outbox(next_attempt_at);
+
+-- Never used; session_apps replaced it in schema v6.
+DROP TABLE IF EXISTS oidc_sessions;
 
 CREATE TABLE IF NOT EXISTS device_codes (
     device_code_hash TEXT    PRIMARY KEY,

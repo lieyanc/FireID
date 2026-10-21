@@ -46,6 +46,7 @@ func (s *Server) passkeyLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.deps.Auth.FinishPasskeyLogin(req.CeremonyID, req.Response, s.clientIP(r))
 	if err != nil {
+		s.auditSignInFailure(r, "passkey", err)
 		s.failPasskey(w, err)
 		return
 	}
@@ -78,6 +79,7 @@ func (s *Server) accountPasskeysFinish(w http.ResponseWriter, r *http.Request, s
 		s.failPasskey(w, err)
 		return
 	}
+	s.auditAccount(r, user, "account.passkey_add", map[string]any{"name": pk.Name})
 	writeJSON(w, http.StatusCreated, map[string]any{"passkey": publicPasskey(pk)})
 }
 
@@ -123,10 +125,20 @@ func (s *Server) accountPasskeyDelete(w http.ResponseWriter, r *http.Request, us
 	if !ok {
 		return
 	}
+	// The name is read first, for the audit log; the row is gone afterwards.
+	name := ""
+	if passkeys, err := s.deps.Store.ListPasskeys(user.ID); err == nil {
+		for _, p := range passkeys {
+			if p.ID == id {
+				name = p.Name
+			}
+		}
+	}
 	if err := s.deps.Auth.DeletePasskey(user, id); err != nil {
 		s.failPasskey(w, err)
 		return
 	}
+	s.auditAccount(r, user, "account.passkey_remove", map[string]any{"name": name})
 	w.WriteHeader(http.StatusNoContent)
 }
 

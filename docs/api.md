@@ -196,6 +196,7 @@ another account.
 |---|---|---|---|
 | GET | `/api/account/sessions` | | `{sessions: [SessionInfo]}`, live sessions only, most recently active first |
 | DELETE | `/api/account/sessions/:id` | | `204`. `404 not_found`, `409 cannot_revoke_current` (use `/api/auth/logout` instead) |
+| POST | `/api/account/sessions/revoke-others` | `{}` | `204`; every other session ends, and so does every token issued to applications |
 | PATCH | `/api/account/profile` | `{displayName}` | `204`. `400 invalid` |
 | POST | `/api/account/password` | `{currentPassword?, newPassword}` | `204`. `401 invalid_credentials`, `400 weak_password`, `429 rate_limited` |
 
@@ -225,6 +226,7 @@ rest of the API.
 | `manageApps` | the account manages at least one app (always true for the super admin) |
 | `ownedApps` | the account is the owner of at least one app |
 | `createApps` | the account may register apps: super admin only |
+| `viewAudit`, `manageKeys` | the deployment-wide audit log and the signing keys: super admin only |
 
 An account *manages* an app when it is the super admin, the app's owner, or an
 active member with role `owner` or `admin`. Deleting an app is for the super admin
@@ -247,6 +249,7 @@ already decided), `400 invalid` with the store's reason in `message`.
   "registrationMode": "closed", "defaultAccess": "members_only",
   "redirectUris": ["https://wiki.example.com/oidc/callback"], "postLogoutRedirectUris": [],
   "scopes": ["openid", "profile", "email"], "grantTypes": ["authorization_code", "refresh_token"],
+  "backchannelLogoutUri": "", "backchannelLogoutSessionRequired": false,
   "secretRotatedAt": "", "createdAt": "2026-10-21T08:00:00Z", "updatedAt": "2026-10-21T08:00:00Z"
 }
 ```
@@ -262,8 +265,8 @@ already decided), `400 invalid` with the store's reason in `message`.
 |---|---|---|---|
 | GET | `/api/admin/apps` | | `{apps: [App]}`, the apps the caller manages (super admin: all) |
 | POST | `/api/admin/apps` | `{slug, name, description?, homepageUrl?, clientType?, tokenEndpointAuthMethod?, redirectUris, postLogoutRedirectUris?, registrationMode?, defaultAccess?, ownerUserId?}` | `201 {app, clientSecret}`. Super admin only. `400 invalid`, `409 conflict` |
-| GET | `/api/admin/apps/:slug` | | `{app, members: [Member], groups: [{id, name}], pendingRequests: [AccessRequest], canDelete}` |
-| PATCH | `/api/admin/apps/:slug` | any of `{name, description, homepageUrl, tokenEndpointAuthMethod, redirectUris, postLogoutRedirectUris, registrationMode, defaultAccess}` | `204`. `400 invalid` |
+| GET | `/api/admin/apps/:slug` | | `{app, members: [Member], groups: [{id, name}], pendingRequests: [AccessRequest], canDelete, backchannelPending}` |
+| PATCH | `/api/admin/apps/:slug` | any of `{name, description, homepageUrl, tokenEndpointAuthMethod, redirectUris, postLogoutRedirectUris, registrationMode, defaultAccess, backchannelLogoutUri, backchannelLogoutSessionRequired}` | `204`. `400 invalid` |
 | DELETE | `/api/admin/apps/:slug` | | `204`. Super admin or the app's owner, otherwise `403 forbidden` |
 | POST | `/api/admin/apps/:slug/secret/rotate` | `{}` | `{clientSecret}`. `400 invalid` for a public client |
 | POST | `/api/admin/apps/:slug/status` | `{status: "active"\|"suspended"}` | `204` |
@@ -283,6 +286,11 @@ In a PATCH an omitted field is left alone; a list replaces the stored one
 (`redirectUris` may not be empty). Suspending an app refuses every sign-in and
 every token use from then on. Deleting an app also deletes its URIs,
 memberships, access requests and every token issued to it.
+
+`backchannelLogoutUri` is where the app is told that a session it signed in
+through has ended ([back-channel logout](#back-channel-logout)); `""` turns it
+off. It must be `https`, or `http` on a loopback host, without a fragment.
+`backchannelPending` counts the notifications still waiting to be delivered.
 
 ### Members
 
@@ -359,6 +367,101 @@ catalog are a later stage: today a person gets into an `admin_approval` (or any
 other) app only when a manager adds them as a member, puts them in a granted
 group, or the app's default access lets them in.
 
+### Audit log
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/api/admin/audit?event=&app=&user=&before=&limit=` | | `{entries: [AuditEntry], nextBefore}`. Super admin only |
+| GET | `/api/admin/apps/:slug/audit?event=&before=&limit=` | | the same, only rows about that app. Managers of the app |
+
+`AuditEntry`:
+
+```json
+{
+  "id": 812, "at": "2026-10-21T08:00:00Z", "severity": "info", "event": "app.update",
+  "actorType": "admin", "actor": {"id": 1, "username": "root", "displayName": ""},
+  "app": {"slug": "wiki", "name": "Wiki"}, "user": null,
+  "ip": "192.0.2.10", "userAgent": "Mozilla/5.0 …", "detail": {"fields": ["redirectUris"]}
+}
+```
+
+Rows come newest first. `event` matches exactly, or as a prefix when it ends in
+`.` (`auth.`); `app` is a slug (`404 not_found` if unknown); `user` is an account
+ID and matches the row's subject or its actor. `limit` defaults to 50 and is
+capped at 200. `nextBefore` is the smallest `id` of a full page — pass it as
+`before` for the next one — and `null` on the last page. `actor`, `app`, `user`
+and `detail` are `null` when absent or since deleted. A non-numeric `user`,
+`before` or `limit` is `400 invalid`.
+
+Severity is `info`, `warning` or `critical`; `actorType` is `user`, `admin`,
+`system` or `client`. Rows are kept for 180 days. Recording is best effort — a
+failed write is logged and never fails the action — and `detail` never holds a
+secret: no password, code, token or attempted username.
+
+| Event | Severity | When |
+|---|---|---|
+| `setup.complete` | info | the first super admin was created |
+| `auth.sign_in` | info | a sign-in finished; detail `{method, amr}`, `method` is `password`, `passkey` or `email` |
+| `auth.sign_in_failed` | warning | credentials were refused; detail `{method, reason}`, `user` set when the attempt named an account |
+| `auth.locked` | warning | throttling locked out a source or an account; detail `{method, scope, lockoutSeconds}` |
+| `auth.sign_out` | info | the person signed out; detail `{via: "rp_logout"}` and the app when an app's `/end_session` did it |
+| `account.password_change`, `account.totp_enable`, `account.totp_disable`, `account.recovery_codes`, `account.passkey_add`, `account.passkey_remove`, `account.update`, `account.session_revoke`, `account.sessions_revoke_others` | info | the account holder changed their own account |
+| `app.create`, `app.update`, `app.secret_rotate`, `app.status`, `app.groups_set`, `app.member_set`, `app.member_remove`, `app.access_decision` | info | an app was administered; `app.update` lists the changed field names |
+| `app.delete` | warning | an app was deleted; the row has no app, detail `{appId, slug, name}` names it |
+| `group.create`, `group.update`, `group.delete`, `group.members_set` | info | a group was administered |
+| `key.rotate`, `key.retire` | warning | a signing key was rotated or retired; detail `{kid}` |
+| `oauth.access_denied` | warning | a sign-in to an app was refused; detail `{reason}` from the [access decision](#access-decision) |
+| `oauth.refresh_replay` | critical | a rotated refresh token came back; its whole family was revoked |
+| `backchannel.failed` | warning | a back-channel logout notification was given up; detail `{attempts, error}` |
+
+### Signing keys
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/api/admin/signing-keys` | | `{keys: [{kid, alg, createdAt, activatedAt, retiredAt, current}]}`, newest first, retired ones included; `retiredAt` is `null` until retired |
+| POST | `/api/admin/signing-keys/rotate` | `{}` | `201 {kid}` |
+| POST | `/api/admin/signing-keys/:kid/retire` | | `204`. `400 invalid` for the current key, `404 not_found` |
+
+Super admin only. Rotation generates a key with the configured algorithm and
+makes it current: new ID tokens and logout tokens are signed with it at once.
+The previous key stays in `/keys`, so tokens it signed keep verifying. Retiring
+removes a non-current key from `/keys`; anything it signed stops verifying, so
+wait at least the longest ID-token lifetime after a rotation. Retiring cannot be
+undone. Private keys never leave the server.
+
+### Back-channel logout
+
+OpenID Connect Back-Channel Logout 1.0. Discovery advertises
+`backchannel_logout_supported` and `backchannel_logout_session_supported`; every
+ID token, including refreshed ones, carries `sid`, the browser session's public
+identifier (`/userinfo` does not).
+
+When a session ends — sign-out, `/end_session`, revoking a session, signing out
+everywhere else, a password change or removal, a disabled account — FireID
+POSTs to the `backchannelLogoutUri` of every app that session signed in to:
+
+```
+POST <backchannelLogoutUri>
+Content-Type: application/x-www-form-urlencoded
+
+logout_token=<JWT>
+```
+
+The logout token is signed with the current signing key (`kid` in the header,
+`typ` `logout+jwt`) and carries `iss`, `aud` (the client ID), `iat`, `exp` (two
+minutes), `jti`, `sub`, `sid` and the `http://schemas.openid.net/event/backchannel-logout`
+event, never a `nonce`. The app should verify it against `/keys` (fetching
+again on an unknown `kid`), end the local session with that `sid`, and answer
+`2xx` within five seconds. Redirects are not followed. A failure is retried
+after 30 seconds, 2 minutes, 10 minutes, 30 minutes and 2 hours; after six
+attempts the notification is dropped and `backchannel.failed` is recorded.
+`sid` is always sent, so `backchannelLogoutSessionRequired` is satisfied either
+way.
+
+A session that simply expires sends nothing, and sessions created before the
+upgrade to schema v6 did not record which apps they signed in to, so they send
+nothing either.
+
 ## Forward auth
 
 The endpoints behind nginx `auth_request` ([DESIGN.md §7](DESIGN.md#7-forward-auth-for-applications-without-a-login),
@@ -404,7 +507,8 @@ Served by the backend, not the UI:
 - `POST /oidc/login` — form-encoded sign-in for browsers without JavaScript.
 
 UI routes: `/` (account home), `/sign-in`, `/setup`, `/email-login`, `/denied`,
-and for administration `/apps`, `/apps/new`, `/apps/:slug`, `/groups` (each page
+and for administration `/apps`, `/apps/new`, `/apps/:slug`, `/groups`, `/audit`,
+`/signing-keys` (each page
 checks `permissions` and sends the person home when they may not be there).
 
 - `/sign-in?return=<path>` — after signing in, the browser goes to `return`. Only

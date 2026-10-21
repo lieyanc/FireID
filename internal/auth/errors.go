@@ -1,6 +1,10 @@
 package auth
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/lieyanc/FireID/internal/store"
+)
 
 // ErrForbidden is returned when a policy — not a credential — refuses the
 // operation, such as self-registration while the deployment is closed.
@@ -24,3 +28,21 @@ var ErrTOTPNotPending = errors.New("no two-step verification enrolment is pendin
 // ErrTOTPNotEnabled is returned when an operation needs two-step verification
 // and the account does not have it.
 var ErrTOTPNotEnabled = errors.New("two-step verification is not on")
+
+// SignInFailure is ErrInvalidCredentials with what the audit log needs: the
+// account, when the attempt identified one, and a short reason for
+// administrators. Responses must still treat it as plain invalid credentials.
+type SignInFailure struct {
+	// User is nil when no account was identified.
+	User   *store.User
+	Reason string
+}
+
+func (e *SignInFailure) Error() string { return ErrInvalidCredentials.Error() }
+
+func (e *SignInFailure) Is(target error) bool { return target == ErrInvalidCredentials }
+
+// signInFailure builds a SignInFailure.
+func signInFailure(user *store.User, reason string) error {
+	return &SignInFailure{User: user, Reason: reason}
+}

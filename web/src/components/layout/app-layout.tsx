@@ -23,6 +23,16 @@ function AppNav() {
       label: t("admin.navigation.groups"),
       show: !!me?.permissions.superAdmin,
     },
+    {
+      to: "/audit",
+      label: t("admin.navigation.audit"),
+      show: !!me?.permissions.viewAudit,
+    },
+    {
+      to: "/signing-keys",
+      label: t("admin.navigation.keys"),
+      show: !!me?.permissions.manageKeys,
+    },
   ].filter((item) => item.show)
 
   if (items.length === 0) return null

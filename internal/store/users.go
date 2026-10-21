@@ -194,13 +194,19 @@ func (s *Store) SetDisplayName(userID int64, name string) error {
 }
 
 // ClearPassword removes the stored hash, which a passkey-only account can do.
+// Like a password change it ends every session and application token.
 func (s *Store) ClearPassword(userID int64) error {
-	_, err := s.db.Exec(`UPDATE users SET password_hash = '', session_gen = session_gen + 1,
-		updated_at = ? WHERE id = ?`, s.nowText(), userID)
-	if err != nil {
-		return fmt.Errorf("clear password: %w", err)
-	}
-	return nil
+	return s.inTx(func(tx *sql.Tx) error {
+		now := s.nowText()
+		if _, err := tx.Exec(`UPDATE users SET password_hash = '', session_gen = session_gen + 1,
+			updated_at = ? WHERE id = ?`, now, userID); err != nil {
+			return fmt.Errorf("clear password: %w", err)
+		}
+		if err := s.revokeSessionsTx(tx, userID, now); err != nil {
+			return err
+		}
+		return s.revokeRefreshTokensTx(tx, userID, "password removed", now)
+	})
 }
 
 // SetStatus changes the account status. Disabling revokes every session and

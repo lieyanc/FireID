@@ -29,37 +29,61 @@ func (s *Storage) EnsureSigningKey(ctx context.Context) error {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return fmt.Errorf("read current signing key: %w", err)
 	}
-	alg := jose.SignatureAlgorithm(s.settings.SigningAlgorithm)
-	priv, err := generatePrivateKey(alg)
+	kid, alg, privEnc, pubJSON, err := s.newSigningKey()
 	if err != nil {
 		return err
 	}
-	kid, err := randomKID()
-	if err != nil {
-		return err
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		return fmt.Errorf("marshal private key: %w", err)
-	}
-	privEnc, err := s.box.Seal(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-	if err != nil {
-		return fmt.Errorf("encrypt private key: %w", err)
-	}
-	pubJSON, err := json.Marshal(jose.JSONWebKey{
-		Key:       priv.Public(),
-		KeyID:     kid,
-		Algorithm: string(alg),
-		Use:       "sig",
-	})
-	if err != nil {
-		return fmt.Errorf("marshal public jwk: %w", err)
-	}
-	err = s.store.InsertCurrentSigningKey(kid, string(alg), privEnc, string(pubJSON))
+	err = s.store.InsertCurrentSigningKey(kid, alg, privEnc, pubJSON)
 	if errors.Is(err, store.ErrConflict) {
 		return nil
 	}
 	return err
+}
+
+// RotateSigningKey generates a key with the configured algorithm and makes it
+// current. The previous key stays published until an administrator retires
+// it, so tokens already issued keep verifying.
+func (s *Storage) RotateSigningKey() (string, error) {
+	kid, alg, privEnc, pubJSON, err := s.newSigningKey()
+	if err != nil {
+		return "", err
+	}
+	if err := s.store.RotateSigningKey(kid, alg, privEnc, pubJSON); err != nil {
+		return "", err
+	}
+	return kid, nil
+}
+
+// newSigningKey generates a key pair and returns its ID, algorithm, sealed
+// private key and public JWK.
+func (s *Storage) newSigningKey() (kid, alg, privEnc, pubJWK string, err error) {
+	a := jose.SignatureAlgorithm(s.settings.SigningAlgorithm)
+	priv, err := generatePrivateKey(a)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	kid, err = randomKID()
+	if err != nil {
+		return "", "", "", "", err
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("marshal private key: %w", err)
+	}
+	privEnc, err = s.box.Seal(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("encrypt private key: %w", err)
+	}
+	pubJSON, err := json.Marshal(jose.JSONWebKey{
+		Key:       priv.Public(),
+		KeyID:     kid,
+		Algorithm: string(a),
+		Use:       "sig",
+	})
+	if err != nil {
+		return "", "", "", "", fmt.Errorf("marshal public jwk: %w", err)
+	}
+	return kid, string(a), privEnc, string(pubJSON), nil
 }
 
 func generatePrivateKey(alg jose.SignatureAlgorithm) (crypto.Signer, error) {
@@ -202,3 +226,6 @@ func randomKID() (string, error) {
 	}
 	return hex.EncodeToString(raw), nil
 }
+
+// RotateSigningKey makes a fresh key current; see Storage.RotateSigningKey.
+func (p *Provider) RotateSigningKey() (string, error) { return p.storage.RotateSigningKey() }

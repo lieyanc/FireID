@@ -13,6 +13,8 @@ const AppsListPage = lazy(() => import("@/pages/admin/apps-list"))
 const AppsNewPage = lazy(() => import("@/pages/admin/apps-new"))
 const AppDetailPage = lazy(() => import("@/pages/admin/apps-detail"))
 const GroupsPage = lazy(() => import("@/pages/admin/groups"))
+const AuditPage = lazy(() => import("@/pages/admin/audit"))
+const SigningKeysPage = lazy(() => import("@/pages/admin/keys"))
 const NotFoundPage = lazy(() => import("@/pages/not-found"))
 
 export const router = createBrowserRouter([
@@ -35,6 +37,9 @@ export const router = createBrowserRouter([
           { path: "apps/new", element: <AppsNewPage /> },
           { path: "apps/:slug", element: <AppDetailPage /> },
           { path: "groups", element: <GroupsPage /> },
+          { path: "audit", element: <AuditPage /> },
+          // Not "keys": that is the OIDC JWKS endpoint (oidc.Handles).
+          { path: "signing-keys", element: <SigningKeysPage /> },
         ],
       },
       { path: "*", element: <NotFoundPage /> },

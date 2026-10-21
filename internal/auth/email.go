@@ -151,7 +151,11 @@ func (s *Service) FinishEmailLogin(p EmailLoginProof, ip string) (*LoginResult, 
 	tok, err := s.findEmailToken(p)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCredentials) {
-			s.login.Fail("email:" + ip)
+			if lock := s.login.Fail("email:" + ip); lock > 0 {
+				s.log.Warn("email sign-in throttled by source", "ip", ip, "lockout", lock.String())
+				s.lockedOut(nil, "email", "source", ip, lock)
+			}
+			return nil, signInFailure(nil, "invalid_code")
 		}
 		return nil, err
 	}
@@ -162,7 +166,11 @@ func (s *Service) FinishEmailLogin(p EmailLoginProof, ip string) (*LoginResult, 
 	if user.Status == store.UserDisabled || !strings.EqualFold(user.Email, tok.Email) {
 		// Disabled since the mail went out, or the address changed: the
 		// mailbox no longer speaks for this account.
-		return nil, ErrInvalidCredentials
+		reason := "address_changed"
+		if user.Status == store.UserDisabled {
+			reason = "account_disabled"
+		}
+		return nil, signInFailure(user, reason)
 	}
 
 	res := &LoginResult{User: user, AMR: "email", ACR: store.ACRLoA1}
@@ -184,7 +192,7 @@ func (s *Service) FinishEmailLogin(p EmailLoginProof, ip string) (*LoginResult, 
 
 	if err := s.store.ConsumeCredentialToken(tok.ID); err != nil {
 		if errors.Is(err, store.ErrConsumed) {
-			return nil, ErrInvalidCredentials
+			return nil, signInFailure(user, "code_used")
 		}
 		return nil, err
 	}

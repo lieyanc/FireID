@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -159,6 +160,7 @@ func (s *Server) adminAppCreate(w http.ResponseWriter, r *http.Request, user *st
 		return
 	}
 	s.deps.Log.Info("app created", "appId", app.ID, "slug", app.Slug, "ownerUserId", owner, "by", user.ID)
+	s.auditAdmin(r, user, "app.create", store.SeverityInfo, app.ID, 0, map[string]any{"slug": app.Slug})
 	noStore(w)
 	writeJSON(w, http.StatusCreated, map[string]any{"app": publicApp(app), "clientSecret": secret})
 }
@@ -185,12 +187,18 @@ func (s *Server) adminApp(w http.ResponseWriter, r *http.Request, user *store.Us
 		s.failFromStore(w, err, "could not list access requests")
 		return
 	}
+	pending, err := s.deps.Store.PendingBackchannel(app.ID)
+	if err != nil {
+		s.failFromStore(w, err, "could not count logout notifications")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"app":             publicApp(app),
-		"members":         publicMembers(members),
-		"groups":          groups,
-		"pendingRequests": publicAccessRequests(requests),
-		"canDelete":       canDeleteApp(user, app),
+		"app":                publicApp(app),
+		"members":            publicMembers(members),
+		"groups":             groups,
+		"pendingRequests":    publicAccessRequests(requests),
+		"canDelete":          canDeleteApp(user, app),
+		"backchannelPending": pending,
 	})
 }
 
@@ -227,6 +235,38 @@ type updateAppRequest struct {
 	PostLogoutRedirectURIs []string `json:"postLogoutRedirectUris"`
 	RegistrationMode       *string  `json:"registrationMode"`
 	DefaultAccess          *string  `json:"defaultAccess"`
+	// BackchannelLogoutURI is "" to stop logout notifications.
+	BackchannelLogoutURI       *string `json:"backchannelLogoutUri"`
+	BackchannelSessionRequired *bool   `json:"backchannelLogoutSessionRequired"`
+}
+
+// changedFields names, for the audit log, the request fields whose value
+// differs from the app's.
+func (req *updateAppRequest) changedFields(a *store.App) []string {
+	out := []string{}
+	text := func(name string, v *string, cur string) {
+		if v != nil && strings.TrimSpace(*v) != strings.TrimSpace(cur) {
+			out = append(out, name)
+		}
+	}
+	list := func(name string, v, cur []string) {
+		if v != nil && !slices.Equal(v, cur) {
+			out = append(out, name)
+		}
+	}
+	text("name", req.Name, a.Name)
+	text("description", req.Description, a.Description)
+	text("homepageUrl", req.HomepageURL, a.HomepageURL)
+	text("tokenEndpointAuthMethod", req.TEAuthMethod, a.TEAuthMethod)
+	list("redirectUris", req.RedirectURIs, a.RedirectURIs)
+	list("postLogoutRedirectUris", req.PostLogoutRedirectURIs, a.PostLogoutRedirectURIs)
+	text("registrationMode", req.RegistrationMode, a.RegistrationMode)
+	text("defaultAccess", req.DefaultAccess, a.DefaultAccess)
+	text("backchannelLogoutUri", req.BackchannelLogoutURI, a.BackchannelLogoutURI)
+	if req.BackchannelSessionRequired != nil && *req.BackchannelSessionRequired != a.BackchannelSessionRequired {
+		out = append(out, "backchannelLogoutSessionRequired")
+	}
+	return out
 }
 
 // adminAppUpdate applies a partial change; the store validates every field,
@@ -249,12 +289,18 @@ func (s *Server) adminAppUpdate(w http.ResponseWriter, r *http.Request, user *st
 		TEAuthMethod:     req.TEAuthMethod,
 		RedirectURIs:     req.RedirectURIs,
 		PostLogoutURIs:   req.PostLogoutRedirectURIs,
+
+		BackchannelLogoutURI:       req.BackchannelLogoutURI,
+		BackchannelSessionRequired: req.BackchannelSessionRequired,
 	})
 	if err != nil {
 		s.failFromStore(w, err, "could not update the application")
 		return
 	}
 	s.deps.Log.Info("app updated", "appId", app.ID, "slug", app.Slug, "by", user.ID)
+	if fields := req.changedFields(app); len(fields) > 0 {
+		s.auditAdmin(r, user, "app.update", store.SeverityInfo, app.ID, 0, map[string]any{"fields": fields})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -273,6 +319,9 @@ func (s *Server) adminAppDelete(w http.ResponseWriter, r *http.Request, user *st
 		return
 	}
 	s.deps.Log.Info("app deleted", "appId", app.ID, "slug", app.Slug, "by", user.ID)
+	// The row is gone, so app_id cannot reference it; the detail names it.
+	s.auditAdmin(r, user, "app.delete", store.SeverityWarning, 0, 0,
+		map[string]any{"appId": app.ID, "slug": app.Slug, "name": app.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -292,6 +341,7 @@ func (s *Server) adminAppRotateSecret(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	s.deps.Log.Info("app secret rotated", "appId", app.ID, "slug", app.Slug, "by", user.ID)
+	s.auditAdmin(r, user, "app.secret_rotate", store.SeverityInfo, app.ID, 0, nil)
 	noStore(w)
 	writeJSON(w, http.StatusOK, map[string]any{"clientSecret": secret})
 }
@@ -313,6 +363,7 @@ func (s *Server) adminAppStatus(w http.ResponseWriter, r *http.Request, user *st
 		return
 	}
 	s.deps.Log.Info("app status changed", "appId", app.ID, "slug", app.Slug, "status", req.Status, "by", user.ID)
+	s.auditAdmin(r, user, "app.status", store.SeverityInfo, app.ID, 0, map[string]any{"status": req.Status})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -332,11 +383,13 @@ func (s *Server) adminAppGroups(w http.ResponseWriter, r *http.Request, user *st
 		s.failFromStore(w, err, "could not grant groups")
 		return
 	}
-	if err := s.deps.Store.SetAppGroups(app.ID, dedupe(req.GroupIDs)); err != nil {
+	ids := dedupe(req.GroupIDs)
+	if err := s.deps.Store.SetAppGroups(app.ID, ids); err != nil {
 		s.failFromStore(w, err, "could not grant groups")
 		return
 	}
-	s.deps.Log.Info("app groups replaced", "appId", app.ID, "count", len(req.GroupIDs), "by", user.ID)
+	s.deps.Log.Info("app groups replaced", "appId", app.ID, "count", len(ids), "by", user.ID)
+	s.auditAdmin(r, user, "app.groups_set", store.SeverityInfo, app.ID, 0, map[string]any{"groupIds": ids})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -440,6 +493,8 @@ func (s *Server) adminAppMemberSet(w http.ResponseWriter, r *http.Request, user 
 	}
 	s.deps.Log.Info("membership set", "appId", app.ID, "userId", member.ID,
 		"role", req.Role, "status", req.Status, "by", user.ID)
+	s.auditAdmin(r, user, "app.member_set", store.SeverityInfo, app.ID, member.ID,
+		map[string]any{"role": req.Role, "status": req.Status})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"member": publicMember(&store.AppMember{AppMembership: *m, User: member}),
 	})
@@ -460,6 +515,7 @@ func (s *Server) adminAppMemberRemove(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	s.deps.Log.Info("membership removed", "appId", app.ID, "userId", userID, "by", user.ID)
+	s.auditAdmin(r, user, "app.member_remove", store.SeverityInfo, app.ID, userID, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -502,6 +558,7 @@ func (s *Server) adminGroupCreate(w http.ResponseWriter, r *http.Request, user *
 		return
 	}
 	s.deps.Log.Info("group created", "groupId", g.ID, "by", user.ID)
+	s.auditAdmin(r, user, "group.create", store.SeverityInfo, 0, 0, map[string]any{"groupId": g.ID, "name": g.Name})
 	writeJSON(w, http.StatusCreated, map[string]any{"group": publicGroup(g)})
 }
 
@@ -520,6 +577,8 @@ func (s *Server) adminGroupUpdate(w http.ResponseWriter, r *http.Request, user *
 		return
 	}
 	s.deps.Log.Info("group updated", "groupId", id, "by", user.ID)
+	s.auditAdmin(r, user, "group.update", store.SeverityInfo, 0, 0,
+		map[string]any{"groupId": id, "name": strings.TrimSpace(req.Name)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -529,27 +588,36 @@ func (s *Server) adminGroupDelete(w http.ResponseWriter, r *http.Request, user *
 	if !ok {
 		return
 	}
+	g, ok := s.loadGroup(w, id)
+	if !ok {
+		return
+	}
 	if err := s.deps.Store.DeleteGroup(id); err != nil {
 		s.failFromStore(w, err, "could not delete the group")
 		return
 	}
 	s.deps.Log.Info("group deleted", "groupId", id, "by", user.ID)
+	s.auditAdmin(r, user, "group.delete", store.SeverityInfo, 0, 0, map[string]any{"groupId": id, "name": g.Name})
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// groupExists answers 404 for an unknown group ID.
-func (s *Server) groupExists(w http.ResponseWriter, id int64) bool {
-	if _, err := s.deps.Store.GroupByID(id); err != nil {
+// loadGroup answers 404 for an unknown group ID.
+func (s *Server) loadGroup(w http.ResponseWriter, id int64) (*store.Group, bool) {
+	g, err := s.deps.Store.GroupByID(id)
+	if err != nil {
 		s.failFromStore(w, err, "could not load the group")
-		return false
+		return nil, false
 	}
-	return true
+	return g, true
 }
 
 // adminGroupMembers lists a group's users (super admin).
 func (s *Server) adminGroupMembers(w http.ResponseWriter, r *http.Request, user *store.User) {
 	id, ok := pathID(w, r)
-	if !ok || !s.groupExists(w, id) {
+	if !ok {
+		return
+	}
+	if _, ok := s.loadGroup(w, id); !ok {
 		return
 	}
 	users, err := s.deps.Store.GroupMembers(id)
@@ -576,7 +644,8 @@ func (s *Server) adminGroupSetMembers(w http.ResponseWriter, r *http.Request, us
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if !s.groupExists(w, id) {
+	g, ok := s.loadGroup(w, id)
+	if !ok {
 		return
 	}
 	ids := dedupe(req.UserIDs)
@@ -585,6 +654,8 @@ func (s *Server) adminGroupSetMembers(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	s.deps.Log.Info("group members replaced", "groupId", id, "count", len(ids), "by", user.ID)
+	s.auditAdmin(r, user, "group.members_set", store.SeverityInfo, 0, 0,
+		map[string]any{"groupId": id, "name": g.Name, "count": len(ids)})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -631,6 +702,8 @@ func (s *Server) adminAccessRequestDecide(w http.ResponseWriter, r *http.Request
 	}
 	s.deps.Log.Info("access request decided", "appId", app.ID, "requestId", id,
 		"userId", decided.UserID, "approve", req.Approve, "by", user.ID)
+	s.auditAdmin(r, user, "app.access_decision", store.SeverityInfo, app.ID, decided.UserID,
+		map[string]any{"approved": req.Approve, "requestId": id})
 	if requester, err := s.deps.Store.UserByID(decided.UserID); err == nil {
 		s.deps.Auth.NotifyAccessDecision(requester, app.Name, req.Approve)
 	} else {
@@ -721,26 +794,28 @@ func (s *Server) adminAppForwardAuth(w http.ResponseWriter, r *http.Request, use
 // lists are never null.
 func publicApp(a *store.App) map[string]any {
 	return map[string]any{
-		"id":                      a.ID,
-		"slug":                    a.Slug,
-		"name":                    a.Name,
-		"description":             a.Description,
-		"homepageUrl":             a.HomepageURL,
-		"clientId":                a.ClientID,
-		"clientType":              a.ClientType,
-		"tokenEndpointAuthMethod": a.TEAuthMethod,
-		"requirePkce":             a.RequirePKCE,
-		"ownerUserId":             a.OwnerUserID,
-		"status":                  a.Status,
-		"registrationMode":        a.RegistrationMode,
-		"defaultAccess":           a.DefaultAccess,
-		"redirectUris":            nonNil(a.RedirectURIs),
-		"postLogoutRedirectUris":  nonNil(a.PostLogoutRedirectURIs),
-		"scopes":                  nonNil(a.Scopes),
-		"grantTypes":              nonNil(a.GrantTypes),
-		"secretRotatedAt":         timeText(a.SecretRotated),
-		"createdAt":               timeText(a.CreatedAt),
-		"updatedAt":               timeText(a.UpdatedAt),
+		"id":                               a.ID,
+		"slug":                             a.Slug,
+		"name":                             a.Name,
+		"description":                      a.Description,
+		"homepageUrl":                      a.HomepageURL,
+		"clientId":                         a.ClientID,
+		"clientType":                       a.ClientType,
+		"tokenEndpointAuthMethod":          a.TEAuthMethod,
+		"requirePkce":                      a.RequirePKCE,
+		"ownerUserId":                      a.OwnerUserID,
+		"status":                           a.Status,
+		"registrationMode":                 a.RegistrationMode,
+		"defaultAccess":                    a.DefaultAccess,
+		"redirectUris":                     nonNil(a.RedirectURIs),
+		"postLogoutRedirectUris":           nonNil(a.PostLogoutRedirectURIs),
+		"scopes":                           nonNil(a.Scopes),
+		"grantTypes":                       nonNil(a.GrantTypes),
+		"backchannelLogoutUri":             a.BackchannelLogoutURI,
+		"backchannelLogoutSessionRequired": a.BackchannelSessionRequired,
+		"secretRotatedAt":                  timeText(a.SecretRotated),
+		"createdAt":                        timeText(a.CreatedAt),
+		"updatedAt":                        timeText(a.UpdatedAt),
 	}
 }
 

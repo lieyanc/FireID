@@ -247,10 +247,7 @@ function SessionRow({
   )
 }
 
-/**
- * Signs out every other session one by one: there is no bulk endpoint. A
- * session that already ended (404) counts as done.
- */
+/** Signs out every session of the account except this one, in one request. */
 function RevokeOthersFlow({
   sessions,
   onDone,
@@ -268,29 +265,17 @@ function RevokeOthersFlow({
   const run = async () => {
     setBusy(true)
     setFormError(null)
-    const results = await Promise.allSettled(
-      targets.map((s) => api.account.sessions.revoke(s.id))
-    )
-    const failures = results.filter(
-      (r): r is PromiseRejectedResult =>
-        r.status === "rejected" && !hasCode(r.reason, "not_found")
-    )
-    await refreshSessions()
-    setBusy(false)
-    if (failures.length === 0) {
-      toast.success(t("sessions.revokeOthersDialog.done"))
-      onDone()
+    try {
+      await api.account.sessions.revokeOthers()
+    } catch (error) {
+      setBusy(false)
+      setFormError(errorMessage(error, t))
+      void refreshSessions()
       return
     }
-    const done = targets.length - failures.length
-    setFormError(
-      done > 0
-        ? t("sessions.revokeOthersDialog.partial", {
-            done,
-            total: targets.length,
-          })
-        : errorMessage(failures[0].reason, t)
-    )
+    await refreshSessions()
+    toast.success(t("sessions.revokeOthersDialog.done"))
+    onDone()
   }
 
   return (

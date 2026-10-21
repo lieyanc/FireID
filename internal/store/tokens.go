@@ -37,6 +37,9 @@ type RefreshToken struct {
 	AuthTime      time.Time
 	AMR           string
 	ACR           string
+	// SID is the browser session's public ID, copied from the authorization
+	// request so a refreshed ID token keeps the same sid.
+	SID           string
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
 	RotatedAt     time.Time
@@ -55,6 +58,7 @@ type RefreshTokenSpec struct {
 	AuthTime      time.Time
 	AMR           string
 	ACR           string
+	SID           string
 	TTL           time.Duration
 }
 
@@ -85,10 +89,10 @@ func (s *Store) RotateRefreshToken(oldToken, newToken string, ttl time.Duration)
 			authTime             string
 		)
 		err := tx.QueryRow(`SELECT id, app_id, user_id, family_id, scope, resource,
-			auth_request_id, auth_time, amr, acr, created_at, expires_at, rotated_at, revoked_at, revoked_reason
+			auth_request_id, auth_time, amr, acr, sid, created_at, expires_at, rotated_at, revoked_at, revoked_reason
 			FROM refresh_tokens WHERE token_hash = ?`, oldHash).Scan(
 			&old.ID, &old.AppID, &old.UserID, &old.FamilyID, &old.Scope, &old.Resource,
-			&old.AuthRequestID, &authTime, &old.AMR, &old.ACR,
+			&old.AuthRequestID, &authTime, &old.AMR, &old.ACR, &old.SID,
 			&createdAt, &expiresAt, &rotatedAt, &revokedAt, &old.RevokedReason,
 		)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -139,6 +143,7 @@ func (s *Store) RotateRefreshToken(oldToken, newToken string, ttl time.Duration)
 			AuthTime:      old.AuthTime,
 			AMR:           old.AMR,
 			ACR:           old.ACR,
+			SID:           old.SID,
 			TTL:           ttl,
 		}, s.now())
 		return err
@@ -160,14 +165,14 @@ func (s *Store) RotateRefreshToken(oldToken, newToken string, ttl time.Duration)
 func (s *Store) RefreshTokenByToken(token string) (*RefreshToken, error) {
 	hash := HashToken(token)
 	const q = `SELECT id, app_id, user_id, family_id, scope, resource,
-		auth_request_id, auth_time, amr, acr, created_at, expires_at,
+		auth_request_id, auth_time, amr, acr, sid, created_at, expires_at,
 		rotated_at, revoked_at, revoked_reason
 		FROM refresh_tokens WHERE token_hash = ?`
 	rt := &RefreshToken{TokenHash: hash}
 	var createdAt, expiresAt, rotatedAt, revokedAt, authTime string
 	err := s.db.QueryRow(q, hash).Scan(
 		&rt.ID, &rt.AppID, &rt.UserID, &rt.FamilyID, &rt.Scope, &rt.Resource,
-		&rt.AuthRequestID, &authTime, &rt.AMR, &rt.ACR,
+		&rt.AuthRequestID, &authTime, &rt.AMR, &rt.ACR, &rt.SID,
 		&createdAt, &expiresAt, &rotatedAt, &revokedAt, &rt.RevokedReason,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -187,14 +192,14 @@ func (s *Store) RefreshTokenByToken(token string) (*RefreshToken, error) {
 // RefreshTokenByID retrieves a refresh token by its database ID.
 func (s *Store) RefreshTokenByID(id int64) (*RefreshToken, error) {
 	const q = `SELECT token_hash, app_id, user_id, family_id, scope, resource,
-		auth_request_id, auth_time, amr, acr, created_at, expires_at,
+		auth_request_id, auth_time, amr, acr, sid, created_at, expires_at,
 		rotated_at, revoked_at, revoked_reason
 		FROM refresh_tokens WHERE id = ?`
 	rt := &RefreshToken{ID: id}
 	var createdAt, expiresAt, rotatedAt, revokedAt, authTime string
 	err := s.db.QueryRow(q, id).Scan(
 		&rt.TokenHash, &rt.AppID, &rt.UserID, &rt.FamilyID, &rt.Scope, &rt.Resource,
-		&rt.AuthRequestID, &authTime, &rt.AMR, &rt.ACR,
+		&rt.AuthRequestID, &authTime, &rt.AMR, &rt.ACR, &rt.SID,
 		&createdAt, &expiresAt, &rotatedAt, &revokedAt, &rt.RevokedReason,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -281,10 +286,10 @@ func insertRefreshTokenTx(tx *sql.Tx, token, familyID string, spec RefreshTokenS
 	expiresAt := now.Add(spec.TTL)
 	const q = `INSERT INTO refresh_tokens
 		(token_hash, app_id, user_id, family_id, scope, resource, auth_request_id,
-		 auth_time, amr, acr, created_at, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		 auth_time, amr, acr, sid, created_at, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	res, err := tx.Exec(q, hash, spec.AppID, spec.UserID, familyID, spec.Scope, spec.Resource,
-		spec.AuthRequestID, formatTime(spec.AuthTime), spec.AMR, spec.ACR,
+		spec.AuthRequestID, formatTime(spec.AuthTime), spec.AMR, spec.ACR, spec.SID,
 		formatTime(now), formatTime(expiresAt))
 	if err != nil {
 		return nil, err
@@ -305,6 +310,7 @@ func insertRefreshTokenTx(tx *sql.Tx, token, familyID string, spec RefreshTokenS
 		AuthTime:      spec.AuthTime,
 		AMR:           spec.AMR,
 		ACR:           spec.ACR,
+		SID:           spec.SID,
 		CreatedAt:     now,
 		ExpiresAt:     expiresAt,
 	}, nil

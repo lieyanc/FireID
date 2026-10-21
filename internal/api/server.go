@@ -180,6 +180,7 @@ func (s *Server) routes() {
 	h("DELETE /api/account/passkeys/{id}", s.guard(false, s.accountPasskeyDelete))
 	h("GET /api/account/sessions", s.guardSession(s.accountSessions))
 	h("DELETE /api/account/sessions/{id}", s.guardSession(s.accountSessionRevoke))
+	h("POST /api/account/sessions/revoke-others", s.guardSession(s.accountSessionsRevokeOthers))
 	h("PATCH /api/account/profile", s.guard(false, s.accountProfile))
 	h("POST /api/account/password", s.guardSession(s.accountPassword))
 
@@ -206,6 +207,11 @@ func (s *Server) routes() {
 	h("POST /api/admin/groups/{id}/members", s.guard(true, s.adminGroupSetMembers))
 	h("GET /api/admin/users/search", s.guard(false, s.adminUsersSearch))
 	h("GET /api/admin/apps/{slug}/forward-auth", s.guard(false, s.adminAppForwardAuth))
+	h("GET /api/admin/apps/{slug}/audit", s.guard(false, s.adminAppAudit))
+	h("GET /api/admin/audit", s.guard(true, s.adminAudit))
+	h("GET /api/admin/signing-keys", s.guard(true, s.adminSigningKeys))
+	h("POST /api/admin/signing-keys/rotate", s.guard(true, s.adminSigningKeyRotate))
+	h("POST /api/admin/signing-keys/{kid}/retire", s.guard(true, s.adminSigningKeyRetire))
 
 	// Forward auth for apps without a login (nginx auth_request).
 	fa := &forwardauth.Handler{Store: s.deps.Store, Session: s.deps.Auth.SessionUser,
@@ -388,6 +394,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	s.deps.Auth.ConsumeSetupToken()
 	s.deps.Log.Warn("super administrator created", "userId", user.ID, "username", user.Username)
+	s.auditAccount(r, user, "setup.complete", nil)
 
 	token, sess, err := s.deps.Auth.StartSession(&auth.LoginResult{User: user, AMR: "pwd", ACR: store.ACRLoA1},
 		s.clientIP(r), r.UserAgent())
@@ -425,6 +432,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			return
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(req.Username), "ip", ip)
+			s.auditSignInFailure(r, "password", err)
 			fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
 		default:
@@ -445,12 +453,13 @@ func (s *Server) loginTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := s.clientIP(r)
-	user, ok := s.passwordForSecondStep(w, req.Username, req.Password, ip)
+	user, ok := s.passwordForSecondStep(w, r, req.Username, req.Password)
 	if !ok {
 		return
 	}
 	res, err := s.deps.Auth.AuthenticateTOTP(user, req.Code, ip, "pwd")
 	if err != nil {
+		s.auditSignInFailure(r, "password", err)
 		s.failSecondFactor(w, err)
 		return
 	}
@@ -465,7 +474,7 @@ func (s *Server) loginTOTPEnrol(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	user, ok := s.passwordForSecondStep(w, req.Username, req.Password, s.clientIP(r))
+	user, ok := s.passwordForSecondStep(w, r, req.Username, req.Password)
 	if !ok {
 		return
 	}
@@ -483,7 +492,8 @@ func (s *Server) loginTOTPEnrol(w http.ResponseWriter, r *http.Request) {
 
 // passwordForSecondStep re-checks a password whose account needs a second
 // step, and returns that account. Anything else is answered here.
-func (s *Server) passwordForSecondStep(w http.ResponseWriter, username, password, ip string) (*store.User, bool) {
+func (s *Server) passwordForSecondStep(w http.ResponseWriter, r *http.Request, username, password string) (*store.User, bool) {
+	ip := s.clientIP(r)
 	_, err := s.deps.Auth.AuthenticatePassword(username, password, ip)
 	var sf *auth.SecondFactorError
 	switch {
@@ -494,6 +504,7 @@ func (s *Server) passwordForSecondStep(w http.ResponseWriter, username, password
 		fail(w, http.StatusConflict, "second_factor_not_required", "this account no longer requires a second factor")
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
+		s.auditSignInFailure(r, "password", err)
 		fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 	default:
 		s.failFromAuth(w, err)
@@ -538,6 +549,11 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.L
 	s.deps.Auth.SetSessionCookie(w, token, sess.ExpiresAt)
 	s.deps.Log.Info("sign-in", "userId", res.User.ID, "username", res.User.Username,
 		"amr", res.AMR, "ip", s.clientIP(r))
+	s.auditSignIn(r, res)
+	if len(res.RecoveryCodes) > 0 {
+		// Policy made the account enrol on the way in.
+		s.auditAccount(r, res.User, "account.totp_enable", nil)
+	}
 
 	resp := map[string]any{"user": publicUser(res.User)}
 	if len(res.RecoveryCodes) > 0 {
@@ -572,8 +588,11 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusForbidden, "cross_site", "cross-site requests are not accepted")
 		return
 	}
+	sess, user, _ := s.deps.Auth.SessionUser(r)
 	if err := s.deps.Auth.SignOutByRequest(r); err != nil {
 		s.deps.Log.Error("sign-out failed", "err", err)
+	} else if user != nil {
+		s.auditAccount(r, user, "auth.sign_out", map[string]any{"sessionId": sess.ID})
 	}
 	s.deps.Auth.ClearSessionCookie(w)
 	w.WriteHeader(http.StatusNoContent)
@@ -624,6 +643,8 @@ func (s *Server) permissions(user *store.User) map[string]bool {
 		"manageApps":  manages,
 		"ownedApps":   len(owned) > 0,
 		"createApps":  user.IsSuperAdmin,
+		"viewAudit":   user.IsSuperAdmin,
+		"manageKeys":  user.IsSuperAdmin,
 	}
 }
 
@@ -997,6 +1018,7 @@ func (s *Server) oidcLoginPOST(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "this account must set up two-step verification in the Fire ID web interface first", http.StatusForbidden)
 		case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, store.ErrNotFound):
 			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
+			s.auditSignInFailure(r, "password", err)
 			http.Error(w, "invalid username, password or code", http.StatusUnauthorized)
 		default:
 			s.deps.Log.Error("sign-in failed", "err", err)
@@ -1013,6 +1035,7 @@ func (s *Server) oidcLoginPOST(w http.ResponseWriter, r *http.Request) {
 	}
 	s.deps.Auth.SetSessionCookie(w, token, sess.ExpiresAt)
 	s.deps.Log.Info("sign-in", "userId", res.User.ID, "username", res.User.Username, "amr", res.AMR, "ip", ip)
+	s.auditSignIn(r, res)
 
 	d, err := s.oidcProvider.Continue(authReqID, sess, res.User, true)
 	switch {

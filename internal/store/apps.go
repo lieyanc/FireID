@@ -31,8 +31,14 @@ type App struct {
 	RegistrationMode string
 	// DefaultAccess is all_users | groups | members_only.
 	DefaultAccess string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// BackchannelLogoutURI receives a logout token when a session that
+	// signed in to this app ends; empty means the app is not told.
+	BackchannelLogoutURI string
+	// BackchannelSessionRequired asks for the sid claim in logout tokens.
+	// FireID always sends it; the flag is kept to report the registration.
+	BackchannelSessionRequired bool
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 
 	RedirectURIs           []string
 	PostLogoutRedirectURIs []string
@@ -73,16 +79,16 @@ const (
 const appColumns = `id, slug, name, description, homepage_url, logo_url, client_id,
 	client_secret_hash, secret_rotated_at, client_type, token_endpoint_auth_method,
 	require_pkce, owner_user_id, status, registration_mode, default_access,
-	created_at, updated_at`
+	backchannel_logout_uri, backchannel_logout_session_required, created_at, updated_at`
 
 func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 	var a App
 	var secretRotated, createdAt, updatedAt string
-	var requirePKCE int
+	var requirePKCE, bcSession int
 	err := row.Scan(&a.ID, &a.Slug, &a.Name, &a.Description, &a.HomepageURL, &a.LogoURL,
 		&a.ClientID, &a.SecretHash, &secretRotated, &a.ClientType, &a.TEAuthMethod,
 		&requirePKCE, &a.OwnerUserID, &a.Status, &a.RegistrationMode, &a.DefaultAccess,
-		&createdAt, &updatedAt)
+		&a.BackchannelLogoutURI, &bcSession, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -90,6 +96,7 @@ func scanApp(row interface{ Scan(...any) error }) (*App, error) {
 		return nil, fmt.Errorf("scan app: %w", err)
 	}
 	a.RequirePKCE = requirePKCE != 0
+	a.BackchannelSessionRequired = bcSession != 0
 	a.SecretRotated = parseTime(secretRotated)
 	a.CreatedAt = parseTime(createdAt)
 	a.UpdatedAt = parseTime(updatedAt)

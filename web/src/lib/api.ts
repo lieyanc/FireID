@@ -8,6 +8,8 @@ import type {
   AppMember,
   AppStatus,
   AppUpdate,
+  AuditFilter,
+  AuditPage,
   ForwardAuthSetup,
   Group,
   Me,
@@ -19,6 +21,7 @@ import type {
   SetupState,
   SignedIn,
   SignInResult,
+  SigningKey,
   TotpEnrolment,
   User,
   VersionInfo,
@@ -130,6 +133,18 @@ const post = <T>(path: string, body?: unknown) =>
 
 const appPath = (slug: string) => `/api/admin/apps/${encodeURIComponent(slug)}`
 
+/** Query string of an audit log page; empty filters are left out. */
+function auditQuery(filter: AuditFilter, before?: number, limit?: number) {
+  const params = new URLSearchParams()
+  if (filter.event) params.set("event", filter.event)
+  if (filter.app) params.set("app", filter.app)
+  if (filter.user !== undefined) params.set("user", String(filter.user))
+  if (before !== undefined) params.set("before", String(before))
+  if (limit !== undefined) params.set("limit", String(limit))
+  const query = params.toString()
+  return query ? `?${query}` : ""
+}
+
 export type PasswordCredentials = {
   username: string
   password: string
@@ -209,6 +224,8 @@ export const api = {
       list: () => get<{ sessions: AccountSession[] }>("/api/account/sessions"),
       revoke: (id: number) =>
         request<void>("DELETE", `/api/account/sessions/${id}`),
+      /** Signs out every session but the one making the request. */
+      revokeOthers: () => post<void>("/api/account/sessions/revoke-others"),
     },
     updateProfile: (displayName: string) =>
       request<void>("PATCH", "/api/account/profile", {
@@ -248,6 +265,26 @@ export const api = {
       post<void>(`${appPath(slug)}/access-requests/${id}/decide`, { approve }),
     forwardAuth: (slug: string) =>
       get<ForwardAuthSetup>(`${appPath(slug)}/forward-auth`),
+    /** The events of one app, newest first. */
+    appAudit: (
+      slug: string,
+      filter: Pick<AuditFilter, "event">,
+      before?: number,
+      limit?: number
+    ) =>
+      get<AuditPage>(
+        `${appPath(slug)}/audit${auditQuery(filter, before, limit)}`
+      ),
+    /** Every event, newest first (super admin). */
+    audit: (filter: AuditFilter, before?: number) =>
+      get<AuditPage>(`/api/admin/audit${auditQuery(filter, before)}`),
+    signingKeys: () => get<{ keys: SigningKey[] }>("/api/admin/signing-keys"),
+    /** Makes a new key current; the old one stays published. */
+    rotateSigningKey: () =>
+      post<{ kid: string }>("/api/admin/signing-keys/rotate"),
+    /** Stops publishing a key that is no longer current. */
+    retireSigningKey: (kid: string) =>
+      post<void>(`/api/admin/signing-keys/${encodeURIComponent(kid)}/retire`),
     groups: () => get<{ groups: Group[] }>("/api/admin/groups"),
     createGroup: (body: { name: string; description: string }) =>
       post<{ group: Group }>("/api/admin/groups", body),

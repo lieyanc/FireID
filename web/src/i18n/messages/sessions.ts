@@ -22,7 +22,6 @@ export const sessions = defineMessages({
       submit: "Sign out others",
       submitting: "Signing out…",
       done: "Other devices signed out",
-      partial: "Signed out {done} of {total} devices. Try again for the rest.",
     },
   },
   zh: {
@@ -45,7 +44,6 @@ export const sessions = defineMessages({
       submit: "退出其他设备",
       submitting: "正在退出…",
       done: "已退出其他设备",
-      partial: "已退出 {done}/{total} 个设备，请重试剩余设备。",
     },
   },
 })

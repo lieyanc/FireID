@@ -151,14 +151,16 @@ access_requests(id, app_id FK, user_id FK, message, status, created_at, decided_
 ### Sessions and tokens
 
 ```sql
-sessions(id, user_id FK, token_hash UNIQUE, created_at, expires_at, last_seen_at,
-         ip, user_agent, amr, acr, revoked_at)
+sessions(id, user_id FK, token_hash UNIQUE, sid UNIQUE, created_at, expires_at,
+         last_seen_at, ip, user_agent, amr, acr, revoked_at)
 auth_codes(code_hash PK, app_id FK, user_id FK, redirect_uri, scope, nonce,
            code_challenge, code_challenge_method, auth_time, amr, acr, sid,
            expires_at, consumed_at)
-refresh_tokens(id, token_hash UNIQUE, app_id FK, user_id FK, family_id, scope,
+refresh_tokens(id, token_hash UNIQUE, app_id FK, user_id FK, family_id, scope, sid,
                created_at, expires_at, rotated_at, revoked_at, revoked_reason)
-id_token_sessions(sid PK, app_id FK, user_id FK, created_at, expires_at)
+session_apps(session_id FK, app_id FK, created_at)
+backchannel_outbox(id, app_id FK, user_id, sid, created_at, next_attempt_at, attempts,
+                   last_error)
 forward_codes(code_hash PK, app_id FK, session_id FK, state_hash, origin, return_url,
               created_at, expires_at, used_at)
 forward_sessions(id, token_hash UNIQUE, app_id FK, session_id FK, created_at, expires_at)
@@ -170,6 +172,12 @@ forward_sessions(id, token_hash UNIQUE, app_id FK, session_id FK, created_at, ex
 - `forward_codes` and `forward_sessions` (schema v5) carry forward auth (§7): a
   one-time code from the IdP to a protected site, and that site's own session, tied
   to its parent `sessions` row. The periodic cleanup purges expired rows.
+- `sid` is the session's public identifier, put in ID tokens and logout tokens.
+  `session_apps` records which apps a session signed in to. When `revoked_at` is set
+  on a session — sign-out, revocation, a password change, a disabled account — a
+  trigger queues a `backchannel_outbox` row for each of those apps that registered a
+  back-channel logout URI, in the same transaction (schema v6). A session that
+  simply expires sends nothing.
 - `amr` records how the session authenticated (`pwd`, `otp`, `webauthn`, `email`),
   `acr` the level: `urn:fireid:loa:1` (single factor) or `...:2` (password + TOTP, or
   passkey user-verified).
@@ -183,6 +191,14 @@ audit_log(id, at, actor_user_id, actor_type, event, app_id, user_id, ip, user_ag
           detail_json, severity)
 settings(key PK, value_json, updated_at, updated_by FK)
 ```
+
+- Exactly one signing key is current. Rotation makes a new key current and leaves
+  the old one published in `/keys`, so tokens it signed keep verifying; retiring a
+  non-current key stops publishing it. Rotation is manual, from the admin UI.
+- The audit log is append-only from the application's point of view and best
+  effort: a failed insert is logged, never a reason to fail the action. Rows are
+  kept for 180 days. `detail_json` never holds a secret. Event names are listed in
+  [api.md](api.md#audit-log).
 
 ## 5. Authentication
 
@@ -250,6 +266,11 @@ Endpoints:
 | `/revoke` | RFC 7009. Revoking a refresh token ends the whole grant, including its access tokens. |
 | `/end_session` | RP-initiated logout. Signs the browser out only for a valid `id_token_hint` naming the signed-in user. |
 
+Back-channel logout: an app that registers a URI receives a signed logout token
+whenever a session that signed in to it ends. A worker delivers the outbox rows
+(see Sessions and tokens) and retries for about three hours; details in
+[api.md](api.md#back-channel-logout).
+
 Not offered yet, and not advertised: `client_credentials`, the device flow,
 `/.well-known/oauth-authorization-server`, the `groups` scope, private_key_jwt.
 
@@ -262,8 +283,8 @@ app. Access tokens are opaque (an encrypted token ID under a key derived from th
 key), backed by an `access_tokens` row that carries scope, expiry and revocation;
 resource servers use `userinfo` or introspection. ID tokens (`RS256` or `ES256`, chosen
 at key generation) carry `iss`, `sub`, `aud`, `azp`, `exp`, `iat`, `auth_time`, `amr`,
-`acr`, `nonce` when sent, `at_hash`, `c_hash`, and the profile/email claims of the
-granted scopes.
+`acr`, `sid`, `nonce` when sent, `at_hash`, `c_hash`, and the profile/email claims of
+the granted scopes.
 
 Token rules enforced in `internal/store`:
 
@@ -368,13 +389,13 @@ UI areas:
   revoke.
 - **Apps** (per app, owner or super admin): details, redirect URIs, secret rotation,
   scopes, token auth method, registration policy, access (groups and members),
-  pending access requests, audit trail for that app. Built in Stage 5 except
-  editable scopes (every app gets `openid profile email`) and the audit trail (Stage 7).
+  pending access requests, back-channel logout URI, audit trail for that app. Built
+  except editable scopes (every app gets `openid profile email`).
 - **Admin** (super admin): users (list, search, create, disable, reset credential,
   force logout, delete), groups, all apps (including create and approve), global
   registration policy, SMTP settings, signing keys (rotate, retire, history), audit log,
-  system health, update (OTA). Groups and app creation are built; the rest is not
-  yet.
+  system health, update (OTA). Groups, app creation, signing keys and the audit log
+  are built; the rest is not yet.
 - **Self-service** (later stage): an app catalog, requesting access to an app, and
   invitations. Until then an app's members are added by its managers.
 
@@ -395,7 +416,7 @@ list or search the directory.
 | 4 | Passkeys, account and session management | done; API in [api.md](api.md), tests in `internal/api/passkey_test.go`, `account_test.go` |
 | 5 | Apps, owners, groups, registration policies, access requests | done; API in [api.md](api.md#administration), tests in `internal/api/admin_test.go` |
 | 6 | Forward-auth endpoint and the per-site nginx include | done; guide in [forward-auth.md](forward-auth.md), tests in `internal/api/forward_test.go` |
-| 7 | Audit log, signing-key rotation, back-channel logout | |
+| 7 | Audit log, signing-key rotation, back-channel logout | done; API in [api.md](api.md#audit-log), tests in `internal/api/audit_test.go`, `keys_test.go`, `backchannel_test.go` |
 | 8 | `client/` module: OIDC client with real id_token verification, trusted-header middleware | |
 | 9 | OpenID conformance-suite run, hardening pass, release pipeline | |
 

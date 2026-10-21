@@ -33,6 +33,10 @@ export type Permissions = {
   manageApps: boolean
   ownedApps: boolean
   createApps: boolean
+  /** The audit log of every app and account (super admin). */
+  viewAudit: boolean
+  /** Rotating and retiring the OIDC signing keys (super admin). */
+  manageKeys: boolean
 }
 
 export type Me = {
@@ -148,6 +152,10 @@ export type App = {
   grantTypes: string[]
   /** "" when the secret has never been rotated. */
   secretRotatedAt: string
+  /** Receives a logout token when a session ends; "" when unset. */
+  backchannelLogoutUri: string
+  /** The app needs the sid claim in logout tokens. */
+  backchannelLogoutSessionRequired: boolean
   createdAt: string
   updatedAt: string
 }
@@ -188,6 +196,8 @@ export type AppDetail = {
   groups: GroupRef[]
   pendingRequests: AccessRequest[]
   canDelete: boolean
+  /** Back-channel logout notifications not yet delivered. */
+  backchannelPending: number
 }
 
 /** GET /api/admin/apps/:slug/forward-auth: protecting a site through nginx. */
@@ -229,5 +239,59 @@ export type AppUpdate = Partial<
     | "postLogoutRedirectUris"
     | "registrationMode"
     | "defaultAccess"
+    | "backchannelLogoutUri"
+    | "backchannelLogoutSessionRequired"
   >
 >
+
+export type AuditSeverity = "info" | "warning" | "critical"
+export type AuditActorType = "user" | "admin" | "system" | "client"
+
+/** A person named in an audit entry. */
+export type AuditPerson = Pick<User, "id" | "username" | "displayName">
+
+/** One audit log row (GET /api/admin/audit). */
+export type AuditEntry = {
+  id: number
+  at: string
+  severity: AuditSeverity
+  /** Catalogue name, e.g. "auth.sign_in". */
+  event: string
+  actorType: AuditActorType
+  /** Who acted; null for the system and for clients. */
+  actor: AuditPerson | null
+  app: { slug: string; name: string } | null
+  /** The account the event is about. */
+  user: AuditPerson | null
+  ip: string
+  userAgent: string
+  /** Event-specific facts; never a secret. */
+  detail: Record<string, unknown> | null
+}
+
+export type AuditPage = {
+  entries: AuditEntry[]
+  /** Pass as `before` for the next (older) page; null on the last one. */
+  nextBefore: number | null
+}
+
+export type AuditFilter = {
+  /** An event name, or a prefix ending in "." such as "auth.". */
+  event?: string
+  /** App slug; only on the log of every app. */
+  app?: string
+  /** Matches the account the event is about or the person who acted. */
+  user?: number
+}
+
+/** An OIDC token signing key (GET /api/admin/signing-keys). */
+export type SigningKey = {
+  kid: string
+  alg: string
+  createdAt: string
+  activatedAt: string
+  /** Set once the key is no longer published; tokens it signed fail. */
+  retiredAt: string | null
+  /** The key new tokens are signed with. */
+  current: boolean
+}

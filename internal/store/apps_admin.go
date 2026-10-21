@@ -65,6 +65,19 @@ func validateHomepage(raw string) error {
 	return nil
 }
 
+// validateBackchannelURI accepts an empty value or a URI that could be a
+// redirect URI: https, or http on loopback, with no fragment. OpenID Connect
+// Back-Channel Logout 1.0 section 2.2 allows a query but not a fragment.
+func validateBackchannelURI(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	if err := ValidateRedirectURI(raw, ClientConfidential); err != nil {
+		return fmt.Errorf("%w: the back-channel logout URI must be https (or http on loopback) without a fragment", ErrInvalid)
+	}
+	return nil
+}
+
 // validateGroup checks a group's name and description.
 func validateGroup(name, description string) (string, error) {
 	name = strings.TrimSpace(name)
@@ -91,6 +104,9 @@ type AppUpdate struct {
 	TEAuthMethod     *string
 	RedirectURIs     []string
 	PostLogoutURIs   []string
+	// BackchannelLogoutURI is empty to stop notifications.
+	BackchannelLogoutURI       *string
+	BackchannelSessionRequired *bool
 }
 
 // UpdateApp applies a partial change. Every value is validated against the
@@ -140,6 +156,15 @@ func (s *Store) UpdateApp(appID int64, in AppUpdate) error {
 	}
 	if err := validateAppPolicy(app.ClientType, method, mode, access); err != nil {
 		return err
+	}
+	if in.BackchannelLogoutURI != nil {
+		if err := validateBackchannelURI(*in.BackchannelLogoutURI); err != nil {
+			return err
+		}
+		set("backchannel_logout_uri", *in.BackchannelLogoutURI)
+	}
+	if in.BackchannelSessionRequired != nil {
+		set("backchannel_logout_session_required", boolInt(*in.BackchannelSessionRequired))
 	}
 	if in.RedirectURIs != nil && len(in.RedirectURIs) == 0 {
 		return fmt.Errorf("%w: at least one redirect URI is required", ErrInvalid)

@@ -18,6 +18,7 @@ import (
 	"github.com/lieyanc/FireID/internal/auth"
 	"github.com/lieyanc/FireID/internal/config"
 	"github.com/lieyanc/FireID/internal/mail"
+	"github.com/lieyanc/FireID/internal/oidc"
 	"github.com/lieyanc/FireID/internal/secretbox"
 	"github.com/lieyanc/FireID/internal/store"
 	"github.com/lieyanc/FireID/internal/version"
@@ -131,6 +132,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Back-channel logout notifications are sent by a worker rather than by
+	// the request that ended the session, so a slow relying party cannot
+	// delay a sign-out. It stops with the housekeeping loop.
+	go oidc.NewBackchannel(st, box, publicBase, slog.Default()).Run(ctx)
+
 	var once sync.Once
 	shutdown := func() {
 		once.Do(func() {
@@ -189,6 +195,7 @@ func housekeeping(ctx context.Context, st *store.Store) {
 				{"refresh tokens", st.DeleteExpiredRefreshTokens},
 				{"email sign-in tokens", st.DeleteExpiredCredentialTokens},
 				{"forward-auth sessions", st.DeleteExpiredForward},
+				{"audit rows", st.DeleteOldAudit},
 			} {
 				if n, err := job.run(); err != nil {
 					slog.Warn("could not delete expired "+job.what, "err", err)

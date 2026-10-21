@@ -24,9 +24,9 @@ userinfo, introspection, revocation, RP-initiated logout) and the sign-in produc
 (setup, password, TOTP with recovery codes, email code / magic link, an English and
 Chinese web UI) are in place, as are passkeys and self-service account management
 (profile, password change, active sessions), app administration (apps with
-delegated owners, members, groups, access requests), and forward auth for sites
-without a login of their own. Next: the audit log, signing-key rotation and
-back-channel logout. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the
+delegated owners, members, groups, access requests), forward auth for sites
+without a login of their own, the audit log, signing-key rotation and
+back-channel logout. Next: the `client/` module for Go applications. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the
 build order.
 
 ## Quick start

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,11 +33,12 @@ type Storage struct {
 	store    *store.Store
 	box      *secretbox.Box
 	settings Settings
+	log      *slog.Logger
 
 	// endBrowserSession signs the browser out of Fire ID after a validated
 	// RP-initiated logout. It is set by the provider, which can reach the
-	// request; nil disables it.
-	endBrowserSession func(ctx context.Context, subject string)
+	// request; nil disables it. clientID names the relying party that asked.
+	endBrowserSession func(ctx context.Context, subject, clientID string)
 }
 
 var (
@@ -47,7 +49,7 @@ var (
 
 // NewStorage returns a Storage that implements op.Storage.
 func NewStorage(st *store.Store, box *secretbox.Box, settings Settings) *Storage {
-	return &Storage{store: st, box: box, settings: settings}
+	return &Storage{store: st, box: box, settings: settings, log: slog.Default()}
 }
 
 // Health implements op.Storage.
@@ -266,10 +268,16 @@ func (s *Storage) CreateAccessAndRefreshTokens(ctx context.Context, request op.T
 			AuthTime:      ar.req.AuthTime,
 			AMR:           ar.req.AMR,
 			ACR:           ar.req.ACR,
+			SID:           ar.req.SID,
 			TTL:           s.settings.RefreshTokenTTL,
 		})
 	} else {
 		_, err = s.store.RotateRefreshToken(currentRefreshToken, newRefresh, s.settings.RefreshTokenTTL)
+		if errors.Is(err, store.ErrRefreshReplayed) {
+			// Two exchanges raced on the same token; the store rotated it for
+			// one and revoked the family for the other.
+			s.auditRefreshReplay(g.appID, g.userID)
+		}
 	}
 	if err != nil {
 		return "", "", time.Time{}, refreshError(err)
@@ -310,6 +318,7 @@ func (s *Storage) TokenRequestByRefreshToken(ctx context.Context, refreshToken s
 		if err := s.store.RevokeRefreshTokenFamily(rt.FamilyID, "replay_detected"); err != nil {
 			return nil, err
 		}
+		s.auditRefreshReplay(rt.AppID, rt.UserID)
 		return nil, store.ErrRefreshReplayed
 	}
 	// Expiry is checked by the store when the token is rotated, against the
@@ -322,6 +331,17 @@ func (s *Storage) TokenRequestByRefreshToken(ctx context.Context, refreshToken s
 		return nil, err
 	}
 	return &refreshTokenRequest{rt: rt, clientID: app.ClientID, scopes: parseSpaceList(rt.Scope)}, nil
+}
+
+// auditRefreshReplay records a replayed refresh token. The family is already
+// revoked by the time this is called; the entry is for the administrator.
+func (s *Storage) auditRefreshReplay(appID, userID int64) {
+	if err := s.store.Audit(store.AuditEvent{
+		Event: "oauth.refresh_replay", Severity: store.SeverityCritical, ActorType: store.ActorClient,
+		AppID: appID, UserID: userID,
+	}); err != nil {
+		s.log.Warn("could not record audit event", "event", "oauth.refresh_replay", "err", err)
+	}
 }
 
 // errAccessDenied is returned when the user may no longer use the app.
@@ -380,7 +400,7 @@ func (s *Storage) TerminateSessionFromRequest(ctx context.Context, req *op.EndSe
 		return "", err
 	}
 	if s.endBrowserSession != nil {
-		s.endBrowserSession(ctx, req.UserID)
+		s.endBrowserSession(ctx, req.UserID, req.ClientID)
 	}
 	return req.RedirectURI, nil
 }
@@ -493,7 +513,11 @@ func (s *Storage) SetUserinfoFromScopes(ctx context.Context, userinfo *oidc.User
 }
 
 // SetUserinfoFromRequest implements op.CanSetUserinfoFromRequest: the claims
-// placed in an ID token.
+// placed in an ID token. Besides the scoped claims it adds sid, the browser
+// session the token was issued for, which is what a back-channel logout token
+// later refers to. A refreshed token keeps the sid of the original grant.
+// The library copies the extra claims into the ID token and never sets sid
+// itself; /userinfo goes through SetUserinfoFromToken and does not get it.
 func (s *Storage) SetUserinfoFromRequest(ctx context.Context, userinfo *oidc.UserInfo, request op.IDTokenRequest, scopes []string) error {
 	userID, err := userIDFromSubject(request.GetSubject())
 	if err != nil {
@@ -504,6 +528,16 @@ func (s *Storage) SetUserinfoFromRequest(ctx context.Context, userinfo *oidc.Use
 		return err
 	}
 	fillUserinfo(userinfo, user, scopes)
+	var sid string
+	switch r := request.(type) {
+	case *authRequest:
+		sid = r.req.SID
+	case *refreshTokenRequest:
+		sid = r.rt.SID
+	}
+	if sid != "" {
+		userinfo.AppendClaims("sid", sid)
+	}
 	return nil
 }
 

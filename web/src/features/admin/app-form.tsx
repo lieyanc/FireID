@@ -25,7 +25,8 @@ import {
   optionsOf,
 } from "@/features/admin/labels"
 import { NativeSelect } from "@/features/admin/native-select"
-import { useI18n, type MessageKey } from "@/i18n"
+import { redirectUriProblem } from "@/features/admin/uri-rules"
+import { useI18n } from "@/i18n"
 import { errorMessage, hasCode } from "@/lib/errors"
 import type {
   App,
@@ -71,29 +72,6 @@ function parseLines(value: string) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-}
-
-function isLoopback(hostname: string) {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase()
-  return host === "localhost" || host === "::1" || /^127\./.test(host)
-}
-
-/** Why a redirect URI would be refused (store.ValidateRedirectURI), or null. */
-function redirectUriProblem(raw: string): MessageKey | null {
-  let url: URL
-  try {
-    url = new URL(raw)
-  } catch {
-    return "admin.apps.uris.notAbsolute"
-  }
-  if (!url.host) return "admin.apps.uris.notAbsolute"
-  if (raw.includes("#")) return "admin.apps.uris.fragment"
-  if (url.username || url.password) return "admin.apps.uris.userinfo"
-  if (url.protocol === "https:") return null
-  if (url.protocol === "http:") {
-    return isLoopback(url.hostname) ? null : "admin.apps.uris.httpNotLoopback"
-  }
-  return "admin.apps.uris.scheme"
 }
 
 function isHttpUrl(raw: string) {

@@ -176,22 +176,23 @@ func (s *Service) FinishPasskeyLogin(ceremonyID string, response []byte, ip stri
 	if err != nil {
 		return nil, err
 	}
-	fail := func(reason string, args ...any) (*LoginResult, error) {
+	var account *store.User
+	// fail logs the library's reason and audits the short code; the account
+	// is named when the assertion got far enough to identify it.
+	fail := func(code, reason string, args ...any) (*LoginResult, error) {
 		s.log.Info("failed passkey sign-in", append([]any{"ip", ip, "reason", reason}, args...)...)
 		if lock := s.login.Fail("login:" + ip); lock > 0 {
 			s.log.Warn("login throttled by source", "ip", ip, "lockout", lock.String())
+			s.lockedOut(account, "passkey", "source", ip, lock)
 		}
-		return nil, ErrInvalidCredentials
+		return nil, signInFailure(account, code)
 	}
 	parsed, err := protocol.ParseCredentialRequestResponseBytes(response)
 	if err != nil {
-		return fail("unparsable assertion")
+		return fail("unparsable_assertion", "unparsable assertion")
 	}
 
-	var (
-		account *store.User
-		stored  *store.Passkey
-	)
+	var stored *store.Passkey
 	lookup := func(rawID, userHandle []byte) (webauthn.User, error) {
 		u, err := s.store.UserByWebAuthnID(base64.RawURLEncoding.EncodeToString(userHandle))
 		if err != nil {
@@ -214,21 +215,21 @@ func (s *Service) FinishPasskeyLogin(ceremonyID string, response []byte, ip stri
 	}
 	_, cred, err := rp.ValidatePasskeyLogin(lookup, c.data, parsed)
 	if err != nil {
-		return fail(err.Error())
+		return fail("assertion_rejected", err.Error())
 	}
 	if account == nil || stored == nil {
-		return fail("credential not on record")
+		return fail("unknown_credential", "credential not on record")
 	}
 	if cred.Authenticator.CloneWarning {
 		// The counter went backwards: two copies of the key may exist.
 		s.log.Warn("passkey signature counter did not increase", "userId", account.ID, "passkeyId", stored.ID)
-		return fail("signature counter did not increase")
+		return fail("counter_regressed", "signature counter did not increase")
 	}
 	flags := parsed.Response.AuthenticatorData.Flags
 	if err := s.store.RecordPasskeyUse(stored.ID, stored.SignCount, cred.Authenticator.SignCount,
 		flags.HasBackupState(), flags.HasUserVerified()); err != nil {
 		if errors.Is(err, store.ErrConsumed) {
-			return fail("concurrent use of the same counter", "userId", account.ID)
+			return fail("concurrent_use", "concurrent use of the same counter", "userId", account.ID)
 		}
 		return nil, err
 	}

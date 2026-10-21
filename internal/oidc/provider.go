@@ -85,9 +85,12 @@ func NewProvider(st *store.Store, box *secretbox.Box, authSvc *auth.Service, cfg
 		CodeMethodS256:           true,
 		AuthMethodPost:           true,
 		GrantTypeRefreshToken:    true,
-		SupportedClaims: []string{"iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "acr", "amr", "azp",
+		SupportedClaims: []string{"iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "acr", "amr", "azp", "sid",
 			"name", "preferred_username", "updated_at", "email", "email_verified"},
 		SupportedScopes: []string{oidc.ScopeOpenID, oidc.ScopeProfile, oidc.ScopeEmail, oidc.ScopeOfflineAccess},
+		// Logout tokens are sent by Backchannel; every ID token carries sid.
+		BackChannelLogoutSupported:        true,
+		BackChannelLogoutSessionSupported: true,
 	}
 
 	u, err := url.Parse(issuer)
@@ -107,6 +110,7 @@ func NewProvider(st *store.Store, box *secretbox.Box, authSvc *auth.Service, cfg
 	}
 
 	p := &Provider{op: opProvider, storage: storage, auth: authSvc, issuer: issuer, log: log}
+	storage.log = log
 	storage.endBrowserSession = p.endBrowserSession
 	return p, nil
 }
@@ -226,12 +230,12 @@ type exchangeKey struct{}
 // endBrowserSession signs the browser out after a logout request whose
 // id_token_hint named the user who is signed in. A hint for someone else —
 // a stale token from an earlier account — leaves the current session alone.
-func (p *Provider) endBrowserSession(ctx context.Context, subject string) {
+func (p *Provider) endBrowserSession(ctx context.Context, subject, clientID string) {
 	ex, ok := ctx.Value(exchangeKey{}).(*exchange)
 	if !ok || p.auth == nil {
 		return
 	}
-	_, user, err := p.auth.SessionUser(ex.r)
+	sess, user, err := p.auth.SessionUser(ex.r)
 	if err != nil || subjectOf(user.ID) != subject {
 		return
 	}
@@ -240,5 +244,18 @@ func (p *Provider) endBrowserSession(ctx context.Context, subject string) {
 		return
 	}
 	p.auth.ClearSessionCookie(ex.w)
-	p.log.Info("signed out by relying party", "userId", user.ID)
+	p.log.Info("signed out by relying party", "userId", user.ID, "clientId", clientID)
+
+	// The app is only named in the entry; the sign-out stands without it.
+	var appID int64
+	if app, err := p.storage.store.AppByClientID(clientID); err == nil {
+		appID = app.ID
+	}
+	if err := p.storage.store.Audit(store.AuditEvent{
+		Event: "auth.sign_out", ActorType: store.ActorUser, ActorUserID: user.ID, UserID: user.ID,
+		AppID: appID, IP: sess.IP, UserAgent: ex.r.UserAgent(),
+		Detail: map[string]any{"via": "rp_logout"},
+	}); err != nil {
+		p.log.Warn("could not record audit event", "event", "auth.sign_out", "err", err)
+	}
 }

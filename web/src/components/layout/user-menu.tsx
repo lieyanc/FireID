@@ -1,6 +1,12 @@
 import { Link, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { AppWindowIcon, LogOutIcon, UsersIcon } from "lucide-react"
+import {
+  AppWindowIcon,
+  KeyRoundIcon,
+  LogOutIcon,
+  ScrollTextIcon,
+  UsersIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -68,7 +74,10 @@ export function UserMenu({ user }: { user: User }) {
             </span>
           </div>
         </DropdownMenuLabel>
-        {(me?.permissions.manageApps || me?.permissions.superAdmin) && (
+        {(me?.permissions.manageApps ||
+          me?.permissions.superAdmin ||
+          me?.permissions.viewAudit ||
+          me?.permissions.manageKeys) && (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
@@ -85,6 +94,22 @@ export function UserMenu({ user }: { user: User }) {
                   <Link to="/groups">
                     <UsersIcon />
                     {t("admin.navigation.groups")}
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {me.permissions.viewAudit && (
+                <DropdownMenuItem asChild>
+                  <Link to="/audit">
+                    <ScrollTextIcon />
+                    {t("admin.navigation.audit")}
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {me.permissions.manageKeys && (
+                <DropdownMenuItem asChild>
+                  <Link to="/signing-keys">
+                    <KeyRoundIcon />
+                    {t("admin.navigation.keys")}
                   </Link>
                 </DropdownMenuItem>
               )}

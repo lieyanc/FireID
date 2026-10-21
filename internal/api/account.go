@@ -71,6 +71,7 @@ func (s *Server) emailVerify(w http.ResponseWriter, r *http.Request) {
 		writeChallenge(w, sf)
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		s.deps.Log.Info("failed email sign-in", "ip", ip)
+		s.auditSignInFailure(r, "email", err)
 		fail(w, http.StatusUnauthorized, "invalid_code", "that code or link is not valid")
 	default:
 		s.failSecondFactor(w, err)
@@ -122,6 +123,7 @@ func (s *Server) accountTOTPConfirm(w http.ResponseWriter, r *http.Request, user
 		s.failSecondFactor(w, err)
 		return
 	}
+	s.auditAccount(r, user, "account.totp_enable", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
 }
 
@@ -135,6 +137,7 @@ func (s *Server) accountTOTPDisable(w http.ResponseWriter, r *http.Request, user
 		s.failSecondFactor(w, err)
 		return
 	}
+	s.auditAccount(r, user, "account.totp_disable", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -149,6 +152,7 @@ func (s *Server) accountRecoveryCodes(w http.ResponseWriter, r *http.Request, us
 		s.failSecondFactor(w, err)
 		return
 	}
+	s.auditAccount(r, user, "account.recovery_codes", nil)
 	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
 }
 
@@ -195,6 +199,23 @@ func (s *Server) accountSessionRevoke(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	s.deps.Log.Info("session revoked by account holder", "userId", user.ID, "sessionId", id)
+	s.auditAccount(r, user, "account.session_revoke", map[string]any{"sessionId": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// accountSessionsRevokeOthers signs every other browser out and revokes the
+// tokens issued to applications, keeping this session.
+func (s *Server) accountSessionsRevokeOthers(w http.ResponseWriter, r *http.Request, sess *store.Session, user *store.User) {
+	var req struct{}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := s.deps.Store.RevokeOtherSessions(user.ID, sess.ID); err != nil {
+		s.failFromStore(w, err, "could not revoke the other sessions")
+		return
+	}
+	s.deps.Log.Info("other sessions revoked by account holder", "userId", user.ID, "keep", sess.ID)
+	s.auditAccount(r, user, "account.sessions_revoke_others", nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -212,6 +233,9 @@ func (s *Server) accountProfile(w http.ResponseWriter, r *http.Request, user *st
 	if err := s.deps.Store.SetDisplayName(user.ID, req.DisplayName); err != nil {
 		s.failFromStore(w, err, "could not change the display name")
 		return
+	}
+	if strings.TrimSpace(req.DisplayName) != user.DisplayName {
+		s.auditAccount(r, user, "account.update", map[string]any{"fields": []string{"displayName"}})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -233,6 +257,7 @@ func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, sess *s
 	err := s.deps.Auth.ChangePassword(user, sess.ID, req.CurrentPassword, req.NewPassword, s.clientIP(r))
 	switch {
 	case err == nil:
+		s.auditAccount(r, user, "account.password_change", nil)
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		fail(w, http.StatusUnauthorized, "invalid_credentials", "that password is not correct")

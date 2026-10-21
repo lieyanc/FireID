@@ -61,16 +61,31 @@ func (p *Provider) Continue(authReqID string, sess *store.Session, user *store.U
 	}
 	if !access.Allowed {
 		p.log.Info("sign-in to app refused", "userId", user.ID, "app", app.Slug, "reason", access.Reason)
+		// The session row holds the address and agent the browser signed in
+		// with, which is the closest thing to the request available here.
+		if err := st.Audit(store.AuditEvent{
+			Event: "oauth.access_denied", Severity: store.SeverityWarning, ActorType: store.ActorSystem,
+			AppID: app.ID, UserID: user.ID, IP: sess.IP, UserAgent: sess.UserAgent,
+			Detail: map[string]any{"reason": access.Reason},
+		}); err != nil {
+			p.log.Warn("could not record audit event", "event", "oauth.access_denied", "err", err)
+		}
 		return &Decision{
 			Redirect: p.errorRedirect(ar, "access_denied", "the user may not use this application"),
 			Denied:   access.Reason,
 		}, nil
 	}
 
-	if err := st.ApproveAuthRequest(ar.ID, user.ID, sess.CreatedAt, sess.AMR, sess.ACR, ""); err != nil {
+	// The session's public ID goes into the ID token as sid, and the
+	// session-app pair is what makes the app receive a logout token when the
+	// session ends.
+	if err := st.ApproveAuthRequest(ar.ID, user.ID, sess.CreatedAt, sess.AMR, sess.ACR, sess.SID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrUnknownRequest
 		}
+		return nil, err
+	}
+	if err := st.RecordSessionApp(sess.ID, app.ID); err != nil {
 		return nil, err
 	}
 	return &Decision{Redirect: p.issuer + "/authorize/callback?id=" + url.QueryEscape(ar.ID)}, nil

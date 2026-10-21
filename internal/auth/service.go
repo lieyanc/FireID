@@ -185,21 +185,25 @@ func (s *Service) AuthenticatePassword(username, password, ip string) (*LoginRes
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			VerifyDummy(password)
-			s.recordFailure(username, ip)
-			return nil, ErrInvalidCredentials
+			s.recordFailure(nil, username, ip)
+			return nil, signInFailure(nil, "unknown_account")
 		}
 		return nil, err
 	}
 
 	if user.PasswordHash == "" || user.Status != store.UserActive {
 		VerifyDummy(password)
-		s.recordFailure(username, ip)
-		return nil, ErrInvalidCredentials
+		s.recordFailure(user, username, ip)
+		reason := "no_password"
+		if user.Status != store.UserActive {
+			reason = "account_" + user.Status
+		}
+		return nil, signInFailure(user, reason)
 	}
 
 	if err := VerifyPassword(password, user.PasswordHash); err != nil {
-		s.recordFailure(username, ip)
-		return nil, ErrInvalidCredentials
+		s.recordFailure(user, username, ip)
+		return nil, signInFailure(user, "wrong_password")
 	}
 
 	// A hash created with weaker parameters is upgraded in place.
@@ -381,13 +385,38 @@ func (s *Service) CheckPassword(password string) error { return s.checkPassword(
 
 // recordFailure counts a failed sign-in against both the source address and the
 // account, so neither a single noisy address nor a distributed attack on one
-// account goes unthrottled.
-func (s *Service) recordFailure(username, ip string) {
+// account goes unthrottled. user is the account the username named, or nil.
+func (s *Service) recordFailure(user *store.User, username, ip string) {
 	if lock := s.login.Fail("login:" + ip); lock > 0 {
 		s.log.Warn("login throttled by source", "ip", ip, "lockout", lock.String())
+		s.lockedOut(user, "password", "source", ip, lock)
 	}
 	if lock := s.login.Fail("acct:" + username); lock > 0 {
 		s.log.Warn("login throttled by account", "username", username, "lockout", lock.String())
+		s.lockedOut(user, "password", "account", ip, lock)
+	}
+}
+
+// lockedOut records a throttle lock-out in the audit log. user is the account
+// the failed attempt named, or nil; an attempted username that names no
+// account is never recorded, since it may be a mistyped password.
+func (s *Service) lockedOut(user *store.User, method, scope, ip string, lock time.Duration) {
+	var userID int64
+	if user != nil {
+		userID = user.ID
+	}
+	s.audit(store.AuditEvent{
+		Event: "auth.locked", Severity: store.SeverityWarning, ActorType: store.ActorSystem,
+		UserID: userID, IP: ip,
+		Detail: map[string]any{"method": method, "scope": scope, "lockoutSeconds": int(lock.Seconds())},
+	})
+}
+
+// audit records an event. It is best effort: a failure is logged, never
+// returned.
+func (s *Service) audit(e store.AuditEvent) {
+	if err := s.store.Audit(e); err != nil {
+		s.log.Warn("could not record audit event", "event", e.Event, "err", err)
 	}
 }
 

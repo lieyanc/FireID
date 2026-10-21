@@ -65,6 +65,7 @@ func (s *Service) AuthenticateTOTP(user *store.User, code, ip, firstAMR string) 
 // six-digit code cannot be guessed from many addresses at once.
 func (s *Service) checkSecondFactor(user *store.User, code, ip string) error {
 	keys := []string{"totp:" + ip, "totp-acct:" + strconv.FormatInt(user.ID, 10)}
+	scopes := []string{"source", "account"}
 	for _, k := range keys {
 		if wait := s.login.RetryAfter(k); wait > 0 {
 			return &RateLimitError{RetryAfter: wait}
@@ -75,12 +76,13 @@ func (s *Service) checkSecondFactor(user *store.User, code, ip string) error {
 		return err
 	}
 	if !ok {
-		for _, k := range keys {
+		for i, k := range keys {
 			if lock := s.login.Fail(k); lock > 0 {
 				s.log.Warn("second factor throttled", "key", k, "lockout", lock.String())
+				s.lockedOut(user, "totp", scopes[i], ip, lock)
 			}
 		}
-		return ErrInvalidCredentials
+		return signInFailure(user, "wrong_code")
 	}
 	for _, k := range keys {
 		s.login.Reset(k)
@@ -176,8 +178,10 @@ func (s *Service) ConfirmEnrolment(user *store.User, code, ip string) ([]string,
 	}
 	step, ok := VerifyTOTPStep(secret, code, s.now(), user.TOTPLastStep)
 	if !ok {
-		s.login.Fail(key)
-		return nil, ErrInvalidCredentials
+		if lock := s.login.Fail(key); lock > 0 {
+			s.lockedOut(user, "totp", "account", ip, lock)
+		}
+		return nil, signInFailure(user, "wrong_code")
 	}
 	codes, hashes, err := newRecoveryCodes()
 	if err != nil {
@@ -247,7 +251,7 @@ func (s *Service) VerifyCurrentPassword(user *store.User, password, ip string) e
 		}
 	}
 	if user.PasswordHash == "" || VerifyPassword(password, user.PasswordHash) != nil {
-		s.recordFailure(user.Username, ip)
+		s.recordFailure(user, user.Username, ip)
 		return ErrInvalidCredentials
 	}
 	return nil

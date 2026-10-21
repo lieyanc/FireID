@@ -16,8 +16,11 @@ import (
 // row holds only its SHA-256, so a database leak does not hand over live
 // sessions.
 type Session struct {
-	ID         int64
-	UserID     int64
+	ID     int64
+	UserID int64
+	// SID is the public session identifier put in ID tokens and logout
+	// tokens. Unlike the token it grants nothing.
+	SID        string
 	CreatedAt  time.Time
 	ExpiresAt  time.Time
 	LastSeenAt time.Time
@@ -71,11 +74,16 @@ func (s *Store) CreateSession(userID int64, ttl time.Duration, ip, userAgent, am
 		return "", nil, err
 	}
 
+	sid, err := randomTokenID(16)
+	if err != nil {
+		return "", nil, fmt.Errorf("generate session ID: %w", err)
+	}
+
 	now := s.now()
 	res, err := s.db.Exec(`INSERT INTO sessions
-		(user_id, token_hash, created_at, expires_at, last_seen_at, ip, user_agent, amr, acr)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		userID, hash, formatTime(now), formatTime(now.Add(ttl)), formatTime(now),
+		(user_id, token_hash, sid, created_at, expires_at, last_seen_at, ip, user_agent, amr, acr)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		userID, hash, sid, formatTime(now), formatTime(now.Add(ttl)), formatTime(now),
 		normaliseIP(ip), truncate(userAgent, 400), amr, acr)
 	if err != nil {
 		return "", nil, fmt.Errorf("insert session: %w", err)
@@ -85,7 +93,7 @@ func (s *Store) CreateSession(userID int64, ttl time.Duration, ip, userAgent, am
 		return "", nil, fmt.Errorf("insert session: %w", err)
 	}
 	return token, &Session{
-		ID: id, UserID: userID, CreatedAt: now, ExpiresAt: now.Add(ttl), LastSeenAt: now,
+		ID: id, UserID: userID, SID: sid, CreatedAt: now, ExpiresAt: now.Add(ttl), LastSeenAt: now,
 		IP: normaliseIP(ip), UserAgent: userAgent, AMR: amr, ACR: acr, SessionGen: user.SessionGen,
 	}, nil
 }
@@ -106,11 +114,11 @@ func (s *Store) SessionUser(token string) (*Session, *User, error) {
 		lastSeenAt string
 		revokedAt  string
 	)
-	row := s.db.QueryRow(`SELECT s.id, s.user_id, s.created_at, s.expires_at, s.last_seen_at,
+	row := s.db.QueryRow(`SELECT s.id, s.user_id, s.sid, s.created_at, s.expires_at, s.last_seen_at,
 			s.ip, s.user_agent, s.amr, s.acr, s.revoked_at, u.session_gen
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = ?`, hash)
-	err := row.Scan(&sess.ID, &sess.UserID, &createdAt, &expiresAt, &lastSeenAt,
+	err := row.Scan(&sess.ID, &sess.UserID, &sess.SID, &createdAt, &expiresAt, &lastSeenAt,
 		&sess.IP, &sess.UserAgent, &sess.AMR, &sess.ACR, &revokedAt, &userGen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil, ErrNotFound

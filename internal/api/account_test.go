@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -280,4 +281,57 @@ func TestAccountPassword(t *testing.T) {
 	wantError(t, "old password", st, http.StatusUnauthorized, body, "invalid_credentials")
 	st, body = e.postJSON(e.browser(), "/api/auth/login", map[string]any{"username": "alice", "password": next})
 	wantStatus(t, "new password", st, http.StatusOK, body)
+}
+
+func TestAccountRevokeOtherSessions(t *testing.T) {
+	e := newOIDCEnv(t)
+	here, there, admin := e.browser(), e.browser(), e.browser()
+	e.passwordSignIn(here, "alice")
+	e.passwordSignIn(admin, "root")
+	// there also signs in to an app and holds a refresh token.
+	cb := e.authorize(there, e.webParams("openid offline_access"), true)
+	resp, tok := e.exchangeWeb(cb.Query().Get("code"))
+	if resp.StatusCode != http.StatusOK || tok["refresh_token"] == nil {
+		t.Fatalf("token: %d %v", resp.StatusCode, tok)
+	}
+
+	// Cross-site and unauthenticated requests are refused.
+	req, _ := http.NewRequest(http.MethodPost, e.issuer+"/api/account/sessions/revoke-others", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	cross, err := here.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cross.Body.Close()
+	if cross.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-site: status %d", cross.StatusCode)
+	}
+	st, body := e.postJSON(e.browser(), "/api/account/sessions/revoke-others", map[string]any{})
+	wantError(t, "signed out", st, http.StatusUnauthorized, body, "unauthenticated")
+	e.me(there) // still signed in
+
+	st, body = e.postJSON(here, "/api/account/sessions/revoke-others", map[string]any{})
+	wantStatus(t, "revoke others", st, http.StatusNoContent, body)
+	e.me(here)
+	e.me(admin) // another account is untouched
+	st, body = e.send(there, http.MethodGet, "/api/account/sessions", nil)
+	wantError(t, "other browser", st, http.StatusUnauthorized, body, "unauthenticated")
+	st, body = e.send(here, http.MethodGet, "/api/account/sessions", nil)
+	if list, _ := body["sessions"].([]any); st != http.StatusOK || len(list) != 1 {
+		t.Fatalf("sessions left: %d %v", st, body)
+	}
+	resp, next := e.postForm(http.DefaultClient, "/oauth/token", url.Values{
+		"grant_type": {"refresh_token"}, "refresh_token": {tok["refresh_token"].(string)},
+		"client_id": {e.web.ClientID}, "client_secret": {e.webSecret},
+	}, "", "")
+	if resp.StatusCode == http.StatusOK {
+		t.Fatalf("refresh after revoke-others: %v", next)
+	}
+
+	rows, err := e.st.ListAudit(store.AuditQuery{Event: "account.sessions_revoke_others"})
+	if err != nil || len(rows) != 1 || rows[0].UserID != e.user.ID || rows[0].ActorUserID != e.user.ID ||
+		rows[0].ActorType != store.ActorUser {
+		t.Fatalf("audit rows %+v %v", rows, err)
+	}
 }

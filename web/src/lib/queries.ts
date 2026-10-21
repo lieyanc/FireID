@@ -1,6 +1,12 @@
-import { QueryClient, queryOptions, useQuery } from "@tanstack/react-query"
+import {
+  QueryClient,
+  queryOptions,
+  useInfiniteQuery,
+  useQuery,
+} from "@tanstack/react-query"
 
 import { api, isApiError } from "@/lib/api"
+import type { AuditFilter, AuditPage } from "@/lib/types"
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +40,10 @@ export const qk = {
     ["admin", "apps", slug, "access-requests"] as const,
   forwardAuth: (slug: string) =>
     ["admin", "apps", slug, "forward-auth"] as const,
+  appAudit: (slug: string, filter: AuditFilter) =>
+    ["admin", "apps", slug, "audit", filter] as const,
+  audit: (filter: AuditFilter) => ["admin", "audit", filter] as const,
+  signingKeys: ["admin", "signing-keys"] as const,
   groups: ["admin", "groups"] as const,
   group: (id: number) => ["admin", "groups", id] as const,
   groupMembers: (id: number) => ["admin", "groups", id, "members"] as const,
@@ -74,5 +84,21 @@ export function useVersion() {
     queryKey: qk.version,
     queryFn: api.version,
     staleTime: 5 * 60_000,
+  })
+}
+
+/**
+ * Pages of an audit log, newest first. Each page asks for the entries older
+ * than the previous page's last one (nextBefore).
+ */
+export function useAuditLog(
+  queryKey: readonly unknown[],
+  fetchPage: (before?: number) => Promise<AuditPage>
+) {
+  return useInfiniteQuery({
+    queryKey,
+    queryFn: ({ pageParam }) => fetchPage(pageParam),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (last) => last.nextBefore ?? undefined,
   })
 }

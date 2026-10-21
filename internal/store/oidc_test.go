@@ -280,6 +280,8 @@ func TestMigrateUpgradesV1Database(t *testing.T) {
 		`DROP INDEX idx_auth_codes_auth_request`,
 		`DROP INDEX idx_refresh_tokens_auth_request`,
 		`DROP INDEX idx_users_webauthn_id`,
+		`DROP INDEX idx_sessions_sid`,
+		`DROP TRIGGER sessions_backchannel_logout`,
 	} {
 		if _, err := st.db.Exec(stmt); err != nil {
 			t.Fatal(err)
@@ -289,6 +291,15 @@ func TestMigrateUpgradesV1Database(t *testing.T) {
 		if _, err := st.db.Exec(`ALTER TABLE ` + c.table + ` DROP COLUMN ` + c.name); err != nil {
 			t.Fatalf("drop %s.%s: %v", c.table, c.name, err)
 		}
+	}
+	// A session from before v6 has no sid.
+	if _, err := st.db.Exec(`INSERT INTO users(username, email, status, created_at, updated_at)
+		VALUES ('old', 'old@example.com', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`INSERT INTO sessions(user_id, token_hash, created_at, expires_at, last_seen_at)
+		SELECT id, 'h', '2026-01-01T00:00:00Z', '2099-01-01T00:00:00Z', '2026-01-01T00:00:00Z' FROM users`); err != nil {
+		t.Fatal(err)
 	}
 	_ = st.Close()
 
@@ -306,6 +317,10 @@ func TestMigrateUpgradesV1Database(t *testing.T) {
 		if n != 1 {
 			t.Errorf("column %s.%s missing after upgrade", c.table, c.name)
 		}
+	}
+	var sid string
+	if err := st.db.QueryRow(`SELECT sid FROM sessions`).Scan(&sid); err != nil || len(sid) != 32 {
+		t.Fatalf("old session sid %q (err %v)", sid, err)
 	}
 	var version int
 	if err := st.db.QueryRow(`SELECT version FROM schema_version`).Scan(&version); err != nil || version != schemaVersion {

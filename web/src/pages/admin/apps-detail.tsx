@@ -6,9 +6,11 @@ import { QueryError } from "@/components/common/query-state"
 import { Badge } from "@/components/ui/badge"
 import { Spinner } from "@/components/ui/spinner"
 import { AccessRequests } from "@/features/admin/access-requests"
+import { AppActivity } from "@/features/admin/app-activity"
 import { AppAccess } from "@/features/admin/app-access"
 import { AppDanger } from "@/features/admin/app-danger"
 import { AppSettings } from "@/features/admin/app-settings"
+import { BackchannelLogout } from "@/features/admin/backchannel-logout"
 import { ForwardAuth } from "@/features/admin/forward-auth"
 import { APP_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/features/admin/labels"
 import { MembersList } from "@/features/admin/members-list"
@@ -43,7 +45,14 @@ export default function AppDetailPage() {
     )
   }
 
-  const { app, members, groups, pendingRequests, canDelete } = query.data
+  const {
+    app,
+    members,
+    groups,
+    pendingRequests,
+    canDelete,
+    backchannelPending,
+  } = query.data
 
   return (
     <>
@@ -73,10 +82,12 @@ export default function AppDetailPage() {
       </div>
 
       <AppSettings app={app} />
+      <BackchannelLogout app={app} pending={backchannelPending ?? 0} />
       <MembersList app={app} members={members} />
       <AppAccess app={app} granted={groups} />
       <ForwardAuth app={app} />
       <AccessRequests app={app} requests={pendingRequests} />
+      <AppActivity app={app} />
       <AppDanger app={app} canDelete={canDelete} />
     </>
   )
