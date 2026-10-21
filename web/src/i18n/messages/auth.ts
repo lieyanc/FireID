@@ -87,6 +87,22 @@ export const auth = defineMessages({
         "The application's sign-in request could not be completed. Go back to the application and try again.",
       home: "Go to your account",
     },
+    denied: {
+      title: "You can't use {app}",
+      titleUnknown: "You can't use this application",
+      reason: {
+        pending_approval:
+          "Your request to use it is waiting for a decision by the application's managers.",
+        blocked: "The application's managers have blocked your access.",
+        app_suspended: "The application is suspended for now.",
+        user_not_active: "Your account is not active.",
+        not_permitted:
+          "You are not a member of the application. Ask its owner to add you.",
+      },
+      home: "Go to your account",
+      switchAccount: "Sign in with another account",
+      switching: "Signing out…",
+    },
     validation: {
       usernameRequired: "Enter a username",
       passwordRequired: "Enter your password",
@@ -175,6 +191,20 @@ export const auth = defineMessages({
         "应用要求更强的登录方式，此账户当前无法满足。",
       internal_error: "应用的登录请求未能完成，请返回应用重试。",
       home: "前往我的账户",
+    },
+    denied: {
+      title: "你无法使用 {app}",
+      titleUnknown: "你无法使用此应用",
+      reason: {
+        pending_approval: "你的使用申请正在等待应用管理者处理。",
+        blocked: "应用管理者已禁止你访问。",
+        app_suspended: "该应用目前已停用。",
+        user_not_active: "你的账户当前未处于活跃状态。",
+        not_permitted: "你不是该应用的成员，请联系应用所有者添加你。",
+      },
+      home: "前往我的账户",
+      switchAccount: "使用其他账户登录",
+      switching: "正在退出…",
     },
     validation: {
       usernameRequired: "请输入用户名",

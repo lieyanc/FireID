@@ -23,9 +23,11 @@ the OIDC provider core (authorization code with PKCE, refresh-token rotation,
 userinfo, introspection, revocation, RP-initiated logout) and the sign-in product
 (setup, password, TOTP with recovery codes, email code / magic link, an English and
 Chinese web UI) are in place, as are passkeys and self-service account management
-(profile, password change, active sessions), and app administration (apps with
-delegated owners, members, groups, access requests). The forward-auth endpoint is
-next. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the build order.
+(profile, password change, active sessions), app administration (apps with
+delegated owners, members, groups, access requests), and forward auth for sites
+without a login of their own. Next: the audit log, signing-key rotation and
+back-channel logout. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the
+build order.
 
 ## Quick start
 
@@ -58,9 +60,14 @@ issuer, so changing it later invalidates issued tokens.
 ### Behind a reverse proxy
 
 The listener is meant to sit on loopback behind nginx, Caddy or Traefik. Bind it
-to `127.0.0.1` and let the proxy terminate TLS. See
-[docs/DESIGN.md §7](docs/DESIGN.md) for the forward-auth configuration and the
-header rules that must be followed.
+to `127.0.0.1` and let the proxy terminate TLS, and set
+`server.trustProxyHeaders` to `true`.
+
+To put a site that has no login behind Fire ID, register
+`https://<site>/__fireid/callback` as a redirect URI of its app and paste the two
+nginx snippets from the app's *Forward auth* card. See
+[docs/forward-auth.md](docs/forward-auth.md) for a complete example and the header
+rules that must be followed.
 
 ## Configuration
 

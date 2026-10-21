@@ -22,8 +22,7 @@ export const passkeys = defineMessages({
     addDialog: {
       title: "Add a passkey",
       passwordPrompt: "Enter your password, then follow your browser's prompt.",
-      noPasswordPrompt:
-        "Name this passkey, then follow your browser's prompt.",
+      noPasswordPrompt: "Name this passkey, then follow your browser's prompt.",
       name: "Name",
       namePlaceholder: "e.g. MacBook, iPhone, YubiKey",
       nameHint: "Helps you tell your passkeys apart. Optional.",

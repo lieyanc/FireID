@@ -71,6 +71,9 @@ func validateGroup(name, description string) (string, error) {
 	if name == "" || len([]rune(name)) > 100 {
 		return "", fmt.Errorf("%w: name must be 1 to 100 characters", ErrInvalid)
 	}
+	if !groupNameOK(name) {
+		return "", fmt.Errorf("%w: a group name may not contain commas or control characters", ErrInvalid)
+	}
 	if len([]rune(description)) > 500 {
 		return "", fmt.Errorf("%w: description is longer than 500 characters", ErrInvalid)
 	}

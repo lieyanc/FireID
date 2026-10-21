@@ -1,7 +1,8 @@
 # UI API
 
 The JSON API behind the embedded UI. It is not a public API: it changes with the
-UI. Applications integrate through OIDC (see [DESIGN.md §6](DESIGN.md#6-oidc-surface)).
+UI. Applications integrate through OIDC (see [DESIGN.md §6](DESIGN.md#6-oidc-surface))
+or, without a login of their own, through [forward auth](#forward-auth).
 
 Conventions:
 
@@ -333,7 +334,8 @@ users.
 ### Access decision
 
 Whether a person may use an app is decided by `store.CanUseApp`, at sign-in and
-again at every token use (refresh, userinfo, introspection), so a change takes
+again at every token use (refresh, userinfo, introspection) and every forward-auth
+request, so a change takes
 effect without waiting for tokens to expire. The first rule that matches wins:
 
 | # | Condition | Result (`denied` reason) |
@@ -357,6 +359,38 @@ catalog are a later stage: today a person gets into an `admin_approval` (or any
 other) app only when a manager adds them as a member, puts them in a granted
 group, or the app's default access lets them in.
 
+## Forward auth
+
+The endpoints behind nginx `auth_request` ([DESIGN.md §7](DESIGN.md#7-forward-auth-for-applications-without-a-login),
+operator guide in [forward-auth.md](forward-auth.md)). The `/api/authz/*` ones are
+called by nginx and by browsers following redirects, not by the UI. `/api/authz/app/*`
+is reached on the protected site's host as `/__fireid/*`, through the server snippet,
+which sets `X-FireID-App` and `X-Original-URL`; FireID never takes either from the
+client.
+
+| Method | Path | Called by | Result |
+|---|---|---|---|
+| GET | `/api/authz/forward` | nginx subrequest | `204` with `X-FireID-User`, `X-FireID-Email`, `X-FireID-Name`, `X-FireID-Groups` (comma-separated group names), `X-FireID-Sub` (account ID). `401` with `Location: <site>/__fireid/start?rd=<url>` without a valid site session. `403` with `X-FireID-Denied: <reason>` when [refused](#access-decision); `403` (logged) when `X-FireID-App` is missing or unknown |
+| GET | `/api/authz/app/start?rd=` | browser, as `/__fireid/start` | `302` to `/api/authz/authorize` on the IdP, setting the state cookie (`__Host-fireid_state` on HTTPS, 10 minutes). `400` for an unregistered host |
+| GET | `/api/authz/authorize?app=&state=&rd=` | browser, on the IdP host | `302` to `/sign-in?return=…` without an IdP session, to `/denied?app=<name>&reason=<reason>` when refused, otherwise to `<site>/__fireid/callback?code=`. `400` for an unknown app, a missing `state` or an unregistered host |
+| GET | `/api/authz/app/callback?code=` | browser, as `/__fireid/callback` | `302` to `rd`, setting the site cookie `__Host-fireid_app` (`fireid_app` on plain HTTP). `400` for an unknown, expired or used code, another origin's code, or a missing or wrong state cookie |
+| GET | `/api/authz/app/logout?rd=` | browser, as `/__fireid/logout` | `302` to `rd`; ends the site session only |
+| GET | `/api/admin/apps/:slug/forward-auth` | UI | `{callbackPath, hosts, serverSnippet, locationSnippet}`. Managers of the app; `404 not_found` otherwise |
+
+The code is single-use, lives 60 seconds and is bound to the app, the site's
+origin and the hash of the state cookie. A site session is valid for its app only,
+expires with the IdP session it came from, and ends with it (sign-out, password
+change, session revocation, disabled account). `CanUseApp` is asked on every
+`/api/authz/forward` call. `rd` is honoured only when it is a URL on the site's
+own origin; anything else becomes the site root. The `400` answers are short
+plain-text pages.
+
+A host is entitled to an app when `<scheme>://<host>/__fireid/callback` is one of
+the app's redirect URIs. `hosts` lists those origins; `serverSnippet` goes in the
+site's `server` block and `locationSnippet` in every location that proxies to the
+app. The snippets point at FireID's own listener (`server.host`, a wildcard
+becoming `127.0.0.1`, and `server.port`).
+
 ## Browser routes
 
 Served by the backend, not the UI:
@@ -369,6 +403,14 @@ Served by the backend, not the UI:
   `/login`, which would loop.
 - `POST /oidc/login` — form-encoded sign-in for browsers without JavaScript.
 
-UI routes: `/` (account home), `/sign-in`, `/setup`, `/email-login`, and for
-administration `/apps`, `/apps/new`, `/apps/:slug`, `/groups` (each page checks
-`permissions` and sends the person home when they may not be there).
+UI routes: `/` (account home), `/sign-in`, `/setup`, `/email-login`, `/denied`,
+and for administration `/apps`, `/apps/new`, `/apps/:slug`, `/groups` (each page
+checks `permissions` and sends the person home when they may not be there).
+
+- `/sign-in?return=<path>` — after signing in, the browser goes to `return`. Only
+  values starting with `/api/authz/authorize?` are honoured (forward auth sends
+  people here); anything else is ignored, so the parameter cannot send anyone to
+  another site.
+- `/denied?app=<name>&reason=<reason>` — where forward auth sends a signed-in
+  person the app refuses. `reason` is one from the [access decision](#access-decision);
+  anything else reads as `not_permitted`.

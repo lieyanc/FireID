@@ -9,9 +9,9 @@ import (
 //go:embed migrate.sql
 var schemaSQL string
 
-// schemaVersion is bumped whenever incrementalColumns grows, so an operator can
+// schemaVersion is bumped whenever the schema grows (v5: forward-auth tables), so an operator can
 // tell from the database which build last touched it.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // incrementalColumns are added to existing tables on upgrade. Adding a column
 // here (rather than editing migrate.sql) is what keeps old databases working.

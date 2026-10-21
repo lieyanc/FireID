@@ -29,7 +29,26 @@ export type Step =
   | { kind: "redirecting" }
   | { kind: "finishing" }
 
-export function useSignInFlow() {
+/** The forward-auth endpoint the sign-in page may send the browser back to. */
+const FORWARD_AUTH_RETURN = "/api/authz/authorize?"
+
+/**
+ * Accepts a `return` parameter only when it points at the IdP's own
+ * forward-auth authorize endpoint, which is where that endpoint's sign-in
+ * redirect always points. Anything else is dropped, so the parameter cannot
+ * be used to send someone to another site after they sign in.
+ */
+export function forwardAuthReturn(value: string | null): string | undefined {
+  if (typeof value !== "string") return undefined
+  return value.startsWith(FORWARD_AUTH_RETURN) ? value : undefined
+}
+
+export function useSignInFlow({
+  returnTo,
+}: {
+  /** Where to go after the sign-in, from forwardAuthReturn. */
+  returnTo?: string
+} = {}) {
   const navigate = useNavigate()
   const [step, setStep] = React.useState<Step>({ kind: "start" })
 
@@ -48,11 +67,18 @@ export function useSignInFlow() {
         void refreshSession().catch(() => {})
         return
       }
+      // A site protected by forward auth sent the person here: its authorize
+      // endpoint decides, now with a session.
+      if (returnTo) {
+        setStep({ kind: "redirecting" })
+        window.location.assign(returnTo)
+        return
+      }
       setStep({ kind: "finishing" })
       await refreshSession().catch(() => {})
       navigate("/", { replace: true })
     },
-    [navigate]
+    [navigate, returnTo]
   )
 
   /** Shows new recovery codes first, when the sign-in just enrolled TOTP. */

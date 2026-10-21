@@ -190,6 +190,18 @@ export type AppDetail = {
   canDelete: boolean
 }
 
+/** GET /api/admin/apps/:slug/forward-auth: protecting a site through nginx. */
+export type ForwardAuthSetup = {
+  /** Path on the site's host that must be registered as a redirect URI. */
+  callbackPath: string
+  /** Origins whose callback is registered, e.g. "https://app.example.com". */
+  hosts: string[]
+  /** Include for the site's server block. */
+  serverSnippet: string
+  /** Lines for each location that proxies to the app. */
+  locationSnippet: string
+}
+
 /** Fields POST /api/admin/apps accepts. */
 export type AppCreate = {
   slug: string

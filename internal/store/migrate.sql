@@ -400,3 +400,36 @@ CREATE TABLE IF NOT EXISTS rate_limits (
     count      INTEGER NOT NULL DEFAULT 0,
     window_end TEXT    NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- Forward auth (nginx auth_request)
+-- ---------------------------------------------------------------------------
+
+-- A one-time code carries a signed-in browser from the IdP to a protected
+-- app's host, where it is exchanged for that app's own session cookie.
+CREATE TABLE IF NOT EXISTS forward_codes (
+    code_hash  TEXT    PRIMARY KEY,
+    app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    -- Hash of the state cookie set on the app's host when the flow started.
+    state_hash TEXT    NOT NULL,
+    -- Origin of the app host the code may be redeemed on.
+    origin     TEXT    NOT NULL,
+    return_url TEXT    NOT NULL,
+    created_at TEXT    NOT NULL,
+    expires_at TEXT    NOT NULL,
+    used_at    TEXT    NOT NULL DEFAULT ''
+);
+
+-- A forward session is one app's view of an IdP session: valid only for that
+-- app, and only while the IdP session it came from is.
+CREATE TABLE IF NOT EXISTS forward_sessions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    token_hash TEXT    NOT NULL UNIQUE,
+    app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    created_at TEXT    NOT NULL,
+    expires_at TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_forward_sessions_session ON forward_sessions(session_id);

@@ -9,6 +9,7 @@ import { AccessRequests } from "@/features/admin/access-requests"
 import { AppAccess } from "@/features/admin/app-access"
 import { AppDanger } from "@/features/admin/app-danger"
 import { AppSettings } from "@/features/admin/app-settings"
+import { ForwardAuth } from "@/features/admin/forward-auth"
 import { APP_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/features/admin/labels"
 import { MembersList } from "@/features/admin/members-list"
 import { useI18n } from "@/i18n"
@@ -74,6 +75,7 @@ export default function AppDetailPage() {
       <AppSettings app={app} />
       <MembersList app={app} members={members} />
       <AppAccess app={app} granted={groups} />
+      <ForwardAuth app={app} />
       <AccessRequests app={app} requests={pendingRequests} />
       <AppDanger app={app} canDelete={canDelete} />
     </>

@@ -8,6 +8,7 @@ import type {
   AppMember,
   AppStatus,
   AppUpdate,
+  ForwardAuthSetup,
   Group,
   Me,
   MemberRole,
@@ -245,6 +246,8 @@ export const api = {
       get<{ requests: AccessRequest[] }>(`${appPath(slug)}/access-requests`),
     decideAccessRequest: (slug: string, id: number, approve: boolean) =>
       post<void>(`${appPath(slug)}/access-requests/${id}/decide`, { approve }),
+    forwardAuth: (slug: string) =>
+      get<ForwardAuthSetup>(`${appPath(slug)}/forward-auth`),
     groups: () => get<{ groups: Group[] }>("/api/admin/groups"),
     createGroup: (body: { name: string; description: string }) =>
       post<{ group: Group }>("/api/admin/groups", body),

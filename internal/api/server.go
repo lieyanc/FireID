@@ -20,6 +20,7 @@ import (
 
 	"github.com/lieyanc/FireID/internal/auth"
 	"github.com/lieyanc/FireID/internal/config"
+	"github.com/lieyanc/FireID/internal/forwardauth"
 	"github.com/lieyanc/FireID/internal/oidc"
 	"github.com/lieyanc/FireID/internal/secretbox"
 	"github.com/lieyanc/FireID/internal/store"
@@ -204,6 +205,12 @@ func (s *Server) routes() {
 	h("GET /api/admin/groups/{id}/members", s.guard(true, s.adminGroupMembers))
 	h("POST /api/admin/groups/{id}/members", s.guard(true, s.adminGroupSetMembers))
 	h("GET /api/admin/users/search", s.guard(false, s.adminUsersSearch))
+	h("GET /api/admin/apps/{slug}/forward-auth", s.guard(false, s.adminAppForwardAuth))
+
+	// Forward auth for apps without a login (nginx auth_request).
+	fa := &forwardauth.Handler{Store: s.deps.Store, Session: s.deps.Auth.SessionUser,
+		Issuer: s.deps.PublicBase, Log: s.deps.Log}
+	fa.Register(s.mux)
 
 	// The provider sends the browser here with a pending authorization
 	// request; the form endpoint is the no-JavaScript sign-in for it.

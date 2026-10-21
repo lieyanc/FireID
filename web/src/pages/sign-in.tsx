@@ -2,12 +2,7 @@ import * as React from "react"
 import { useForm } from "react-hook-form"
 import { Navigate, useSearchParams } from "react-router"
 import { zodResolver } from "@hookform/resolvers/zod"
-import {
-  CircleAlertIcon,
-  InfoIcon,
-  KeyRoundIcon,
-  MailIcon,
-} from "lucide-react"
+import { CircleAlertIcon, InfoIcon, KeyRoundIcon, MailIcon } from "lucide-react"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -26,6 +21,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
+  forwardAuthReturn,
   useSignInFlow,
   type Credentials,
   type SignInFlow,
@@ -54,15 +50,22 @@ export default function SignInPage() {
   // because the session is not enough for the app (prompt=login, max_age, a
   // higher acr). Bouncing back would loop, so the form is shown instead.
   const reauth = params.get("reauth") === "1"
+  // A site protected by forward auth sends the browser here with the
+  // authorize URL to come back to. An authorization request wins.
+  const returnTo = authReqId
+    ? undefined
+    : forwardAuthReturn(params.get("return"))
   const me = useMe()
   const emailLogin = !!useSetupState().data?.emailLogin
-  const flow = useSignInFlow()
+  const flow = useSignInFlow({ returnTo })
   const { step, setStep } = flow
 
   const atStart = step.kind === "start"
   // A signed-in visitor with an authorization request goes to the backend's
   // /login, which continues at once when the session is good enough.
   const continueToApp = atStart && !!me.data && !!authReqId && !reauth
+  // One coming from a protected site goes straight back to its authorize URL.
+  const continueToSite = atStart && !!me.data && !!returnTo
 
   React.useEffect(() => {
     if (!continueToApp || !authReqId) return
@@ -71,24 +74,32 @@ export default function SignInPage() {
     )
   }, [continueToApp, authReqId])
 
+  React.useEffect(() => {
+    if (!continueToSite || !returnTo) return
+    window.location.assign(returnTo)
+  }, [continueToSite, returnTo])
+
   if (atStart && me.isPending) return <FullPageSpinner />
-  if (atStart && me.data && !authReqId) return <Navigate to="/" replace />
+  if (atStart && me.data && !authReqId && !returnTo) {
+    return <Navigate to="/" replace />
+  }
 
   const startOver = () => setStep({ kind: "start" })
 
   let content: React.ReactNode
   switch (step.kind) {
     case "start":
-      content = continueToApp ? (
-        <BusyCard message={t("auth.signIn.redirecting")} />
-      ) : (
-        <PasswordStep
-          flow={flow}
-          authReqId={authReqId}
-          emailLogin={emailLogin}
-          defaultUsername={me.data?.user.username}
-        />
-      )
+      content =
+        continueToApp || continueToSite ? (
+          <BusyCard message={t("auth.signIn.redirecting")} />
+        ) : (
+          <PasswordStep
+            flow={flow}
+            authReqId={authReqId}
+            emailLogin={emailLogin}
+            defaultUsername={me.data?.user.username}
+          />
+        )
       break
     case "enrol-intro":
       content = <EnrolIntroStep creds={step.creds} flow={flow} />

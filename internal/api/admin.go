@@ -3,10 +3,12 @@ package api
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/lieyanc/FireID/internal/forwardauth"
 	"github.com/lieyanc/FireID/internal/store"
 )
 
@@ -678,6 +680,37 @@ func (s *Server) adminUsersSearch(w http.ResponseWriter, r *http.Request, user *
 		out = append(out, publicUser(u))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"users": out})
+}
+
+// ---------------------------------------------------------------------------
+// Forward auth
+// ---------------------------------------------------------------------------
+
+// adminAppForwardAuth returns the nginx include for protecting a site with
+// this app, and the hosts the app has registered for it.
+func (s *Server) adminAppForwardAuth(w http.ResponseWriter, r *http.Request, user *store.User) {
+	app, ok := s.managedApp(w, r, user)
+	if !ok {
+		return
+	}
+	hosts := []string{}
+	for _, uri := range app.RedirectURIs {
+		if origin, found := strings.CutSuffix(uri, forwardauth.CallbackPath); found {
+			hosts = append(hosts, origin)
+		}
+	}
+	srv := s.deps.Config.Get().Server
+	host := srv.Host
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	upstream := "http://" + net.JoinHostPort(host, strconv.Itoa(srv.Port))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"callbackPath":    forwardauth.CallbackPath,
+		"hosts":           hosts,
+		"serverSnippet":   forwardauth.NginxServerSnippet(app.Slug, upstream),
+		"locationSnippet": forwardauth.NginxLocationSnippet(),
+	})
 }
 
 // ---------------------------------------------------------------------------

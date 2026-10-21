@@ -159,11 +159,17 @@ auth_codes(code_hash PK, app_id FK, user_id FK, redirect_uri, scope, nonce,
 refresh_tokens(id, token_hash UNIQUE, app_id FK, user_id FK, family_id, scope,
                created_at, expires_at, rotated_at, revoked_at, revoked_reason)
 id_token_sessions(sid PK, app_id FK, user_id FK, created_at, expires_at)
+forward_codes(code_hash PK, app_id FK, session_id FK, state_hash, origin, return_url,
+              created_at, expires_at, used_at)
+forward_sessions(id, token_hash UNIQUE, app_id FK, session_id FK, created_at, expires_at)
 ```
 - Everything server-side is stored as a SHA-256 hash of the opaque value.
 - `auth_codes` live 60 seconds and are single-use; replay revokes the whole family.
 - Refresh tokens rotate on every use. Reuse of a rotated token revokes the family
   (RFC 9700 §4.14.2) and raises an audit event.
+- `forward_codes` and `forward_sessions` (schema v5) carry forward auth (§7): a
+  one-time code from the IdP to a protected site, and that site's own session, tied
+  to its parent `sessions` row. The periodic cleanup purges expired rows.
 - `amr` records how the session authenticated (`pwd`, `otp`, `webauthn`, `email`),
   `acr` the level: `urn:fireid:loa:1` (single factor) or `...:2` (password + TOTP, or
   passkey user-verified).
@@ -220,8 +226,8 @@ Rules:
 
 Opaque random 32-byte session id, stored hashed in `sessions`. Cookie attributes:
 `HttpOnly`, `SameSite=Lax`, `Secure` when the request arrives over TLS, `Path=/`,
-`Domain` configurable for subdomain sharing. The IdP's own session is deliberately
-separate from any application session.
+`Domain` configurable for subdomain sharing (forward auth does not need it, §7). The
+IdP's own session is deliberately separate from any application session.
 
 CSRF for the UI: `Origin`/`Sec-Fetch-Site` checks on unsafe methods (house convention),
 plus `SameSite=Lax`. No per-form tokens.
@@ -291,31 +297,53 @@ products:
 
 ## 7. Forward auth for applications without a login
 
-`GET /api/authz/forward` — called by nginx as an internal subrequest.
+nginx `auth_request` asks FireID about every request to a protected site. The
+operator's guide, with a complete server block, is [forward-auth.md](forward-auth.md).
 
-- Returns `204` when the session is valid and the user may use the app, with headers:
-  `X-FireID-User`, `X-FireID-Email`, `X-FireID-Name`, `X-FireID-Groups`, `X-FireID-Sub`.
-- Returns `401` with `Location` set to the login URL when unauthenticated.
-- Returns `403` when the user is known but not entitled to this app.
-- The app identity is taken from the `X-FireID-App` value nginx sets, never from the client.
-- When `X-FireID-Redirect-Param: location` is set, the configured client app receives the
-  identity in a `Remote-User` style header after a redirect instead of a subrequest
-  status — **not in v1**; the subrequest mode is enough.
+Each protected site (an app plus a host) gets its **own session cookie** on its own
+host. The IdP session cookie never leaves the IdP host, so no `Domain` sharing is
+needed. A site session is reached through a short hop:
 
-nginx side (two locations, one include per protected site):
+1. `GET /api/authz/forward` (internal subrequest; nginx sets `X-FireID-App` and
+   `X-Original-URL`) answers:
+   - `204` with `X-FireID-User`, `X-FireID-Email`, `X-FireID-Name`,
+     `X-FireID-Groups` (comma-separated group names) and `X-FireID-Sub` (numeric
+     account ID) when the site cookie is valid and `store.CanUseApp` allows;
+   - `401` with `Location: <site>/__fireid/start?rd=<url>` when there is no valid
+     site session — the include turns it into a `302`;
+   - `403` with `X-FireID-Denied: <reason>` when refused, and `403` (logged) when
+     `X-FireID-App` is missing or unknown, which is a misconfiguration.
+2. `/__fireid/start` on the site (proxied to `/api/authz/app/start`) sets a state
+   cookie on the site's host (`__Host-fireid_state` on HTTPS, 10 minutes) and sends
+   the browser to the IdP's `/api/authz/authorize?app=&state=&rd=`.
+3. Authorize, on the IdP host: no IdP session → `/sign-in?return=…`; refused by
+   `CanUseApp` → the `/denied` page; otherwise a one-time code (60 s, single use,
+   bound to the app, the site's origin and the hash of the state cookie) →
+   `<site>/__fireid/callback?code=`.
+4. The callback redeems the code, checks the origin and the state cookie, sets the
+   site cookie `__Host-fireid_app` (`fireid_app` on plain HTTP; `HttpOnly`,
+   `SameSite=Lax`, expiring with the IdP session) and returns to `rd`. `rd` is only
+   ever a URL on the site's own origin; anything else becomes the site root.
 
-```nginx
-location = /__fireid/authz {
-    internal;
-    proxy_pass http://127.0.0.1:8099/api/authz/forward;
-    proxy_pass_request_body off;
-    proxy_set_header Content-Length "";
-    proxy_set_header X-FireID-App "app-a";
-    proxy_set_header X-Original-URL $scheme://$host$request_uri;
-    proxy_set_header X-Original-Method $request_method;
-    proxy_set_header X-Real-IP $remote_addr;
-}
-```
+Invariants:
+
+- A host is entitled to an app only when `<scheme>://<host>/__fireid/callback` is
+  one of the app's redirect URIs; start and authorize refuse any other host. An owner
+  can therefore protect only hosts they registered.
+- The app identity comes from the `X-FireID-App` value nginx sets, never from the client.
+- A site session is valid only for its app, and only while its parent IdP session is
+  live: signing out at the IdP, a password change, revoking the session, or disabling
+  the account ends it at the next request.
+- `CanUseApp` is asked on every request, so blocking a member takes effect at once.
+- `/__fireid/logout` ends only the site session. Signing out everywhere is at the IdP.
+
+Owners get the nginx configuration from `GET /api/admin/apps/{slug}/forward-auth`
+(the *Forward auth* card on the app page): a **server snippet** for the site's
+`server` block — `auth_request` for the whole server, the `internal` location
+`= /__fireid/authz` with no request body, and `^~ /__fireid/` proxied to
+`/api/authz/app/` — and a **location snippet** that every location proxying to the
+app must carry, because nginx drops inherited `proxy_set_header` lines once a
+location sets its own.
 
 Critical rules, each of which has been a real CVE in a comparable product in 2026:
 
@@ -326,6 +354,9 @@ Critical rules, each of which has been a real CVE in a comparable product in 202
    A published Docker port bypasses both nginx and any firewall rule.
 4. Downstream apps receive identity headers only from the proxy, and must be bound to
    loopback so a direct connection cannot forge them.
+
+Not in v1: a redirect mode that hands the identity over in a `Remote-User` style
+header instead of a subrequest status; protecting non-HTTP services.
 
 ## 8. Administration
 
@@ -363,7 +394,7 @@ list or search the directory.
 | 3 | Product layer: setup flow, sessions, password/TOTP/magic link, UI shell, i18n | done; API in [api.md](api.md), tests in `internal/api/signin_test.go` |
 | 4 | Passkeys, account and session management | done; API in [api.md](api.md), tests in `internal/api/passkey_test.go`, `account_test.go` |
 | 5 | Apps, owners, groups, registration policies, access requests | done; API in [api.md](api.md#administration), tests in `internal/api/admin_test.go` |
-| 6 | Forward-auth endpoint and the per-site nginx include | |
+| 6 | Forward-auth endpoint and the per-site nginx include | done; guide in [forward-auth.md](forward-auth.md), tests in `internal/api/forward_test.go` |
 | 7 | Audit log, signing-key rotation, back-channel logout | |
 | 8 | `client/` module: OIDC client with real id_token verification, trusted-header middleware | |
 | 9 | OpenID conformance-suite run, hardening pass, release pipeline | |
@@ -376,5 +407,5 @@ Stage 8 is worth doing early for any application that already has login code to 
   thin handlers over a JOSE library. Awaiting the library review.
 - Whether per-app access tokens should be audience-restricted to `/userinfo` only, or
   usable as bearer tokens by the apps themselves (a "resource server" mode). v1: tokens
-  are for `userinfo` and forward-auth; apps that need their own bearer flow keep using
+  are for `userinfo`; apps that need their own bearer flow keep using
   their existing API keys.

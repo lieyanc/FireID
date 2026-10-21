@@ -130,7 +130,10 @@ export function PasskeysCard({ user }: { user: User }) {
             <Spinner className="size-5 text-muted-foreground" />
           </div>
         ) : query.isError ? (
-          <QueryError error={query.error} onRetry={() => void query.refetch()} />
+          <QueryError
+            error={query.error}
+            onRetry={() => void query.refetch()}
+          />
         ) : query.data.length === 0 ? (
           <Empty className="border p-4">
             <EmptyHeader>
@@ -156,7 +159,9 @@ export function PasskeysCard({ user }: { user: User }) {
 
       <Dialog open={dialog?.kind === "add"} onOpenChange={onOpenChange}>
         <DialogContent closeLabel={closeLabel}>
-          {dialog?.kind === "add" && <AddPasskeyFlow user={user} onDone={close} />}
+          {dialog?.kind === "add" && (
+            <AddPasskeyFlow user={user} onDone={close} />
+          )}
         </DialogContent>
       </Dialog>
       <Dialog open={dialog?.kind === "rename"} onOpenChange={onOpenChange}>
@@ -430,7 +435,9 @@ function AddPasskeyFlow({ user, onDone }: { user: User; onDone: () => void }) {
               aria-invalid={!!errors.name}
               {...form.register("name")}
             />
-            <FieldDescription>{t("passkeys.addDialog.nameHint")}</FieldDescription>
+            <FieldDescription>
+              {t("passkeys.addDialog.nameHint")}
+            </FieldDescription>
             <FieldError errors={[errors.name]} />
           </Field>
           <Button type="submit" disabled={isSubmitting}>

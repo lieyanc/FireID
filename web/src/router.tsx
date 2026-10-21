@@ -7,6 +7,7 @@ import { RouteError } from "@/components/layout/route-error"
 const SetupPage = lazy(() => import("@/pages/setup"))
 const SignInPage = lazy(() => import("@/pages/sign-in"))
 const EmailLoginPage = lazy(() => import("@/pages/email-login"))
+const DeniedPage = lazy(() => import("@/pages/denied"))
 const HomePage = lazy(() => import("@/pages/home"))
 const AppsListPage = lazy(() => import("@/pages/admin/apps-list"))
 const AppsNewPage = lazy(() => import("@/pages/admin/apps-new"))
@@ -22,6 +23,8 @@ export const router = createBrowserRouter([
       { path: "setup", element: <SetupPage /> },
       { path: "sign-in", element: <SignInPage /> },
       { path: "email-login", element: <EmailLoginPage /> },
+      // Forward auth's refusal page: no session needed to read it.
+      { path: "denied", element: <DeniedPage /> },
       {
         element: <SessionGate />,
         // Admin pages check permissions themselves and redirect home when

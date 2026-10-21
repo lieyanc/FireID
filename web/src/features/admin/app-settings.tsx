@@ -58,6 +58,7 @@ export function AppSettings({ app }: { app: App }) {
 
   const submit = async (values: AppFormValues) => {
     await api.admin.updateApp(app.slug, updateFrom(values))
+    // Also refetches qk.forwardAuth: its hosts come from the redirect URIs.
     await queryClient.invalidateQueries({ queryKey: qk.app(app.slug) })
     void queryClient.invalidateQueries({ queryKey: qk.apps })
     toast.success(t("admin.detail.updated"))

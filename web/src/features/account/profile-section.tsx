@@ -151,7 +151,9 @@ function EditProfileFlow({ user, onDone }: { user: User; onDone: () => void }) {
               aria-invalid={!!errors.displayName}
               {...form.register("displayName")}
             />
-            <FieldDescription>{t("auth.fields.displayNameHint")}</FieldDescription>
+            <FieldDescription>
+              {t("auth.fields.displayNameHint")}
+            </FieldDescription>
             <FieldError errors={[errors.displayName]} />
           </Field>
           <Button type="submit" disabled={isSubmitting}>
@@ -206,7 +208,11 @@ function ChangePasswordFlow({
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+    defaultValues: {
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    },
   })
   const { errors, isSubmitting } = form.formState
 
@@ -243,7 +249,9 @@ function ChangePasswordFlow({
     <>
       <DialogHeader>
         <DialogTitle>{t("account.password.title")}</DialogTitle>
-        <DialogDescription>{t("account.password.description")}</DialogDescription>
+        <DialogDescription>
+          {t("account.password.description")}
+        </DialogDescription>
       </DialogHeader>
       <form onSubmit={form.handleSubmit(onSubmit)} noValidate>
         <FieldGroup>

@@ -236,6 +236,33 @@ export const admin = defineMessages({
       denied: "Request denied",
       alreadyDecided: "The request was already decided",
     },
+    forwardAuth: {
+      title: "Forward auth",
+      description:
+        "Protect a site that has no sign-in of its own. nginx asks Fire ID about every request and lets through only people who may use this application.",
+      hosts: "Protected hosts",
+      noHosts: "No site is registered yet.",
+      noHostsHint:
+        "To register a site, add this address to the redirect URIs above, with the site's host in place of <site host>:",
+      server: "Include in the site's server block",
+      copyServer: "Copy server block",
+      location: "Add to each location that proxies to the app",
+      copyLocation: "Copy location lines",
+      warningTitle: "Keep the backend behind nginx",
+      warning:
+        "The application's backend must listen only on loopback, or otherwise be unreachable except through nginx, and every location that proxies to it needs the lines above. Otherwise a client could send its own X-FireID-* headers and pass as anyone.",
+      headers: "Headers the application receives",
+      header: {
+        user: "Username",
+        email: "Email address",
+        name: "Display name",
+        groups: "Group names, comma-separated",
+        sub: "Stable numeric user ID",
+      },
+      signOut: "Sign-out link for the site",
+      signOutHint:
+        "Ends the session on that site only; the person stays signed in to Fire ID.",
+    },
     groups: {
       pageTitle: "Groups",
       pageDescription: "Sets of people that applications can grant access to.",
@@ -512,6 +539,32 @@ export const admin = defineMessages({
       approved: "请求已批准",
       denied: "请求已拒绝",
       alreadyDecided: "该请求已被处理",
+    },
+    forwardAuth: {
+      title: "转发认证",
+      description:
+        "保护没有自带登录功能的站点。nginx 会就每个请求询问 Fire ID，只放行可以使用此应用的人。",
+      hosts: "受保护的主机",
+      noHosts: "还没有登记任何站点。",
+      noHostsHint:
+        "要登记站点，请把下面的地址加入上方的重定向 URI，并把 <site host> 换成站点的主机名：",
+      server: "加入站点的 server 块",
+      copyServer: "复制 server 块配置",
+      location: "加入每个反向代理到应用的 location",
+      copyLocation: "复制 location 配置",
+      warningTitle: "后端只能经由 nginx 访问",
+      warning:
+        "应用后端必须只监听回环地址，或者以其他方式确保只能经由 nginx 访问；并且每个反向代理到它的 location 都要加上上面的配置。否则客户端可以自己发送 X-FireID-* 请求头，冒充任何人。",
+      headers: "应用收到的请求头",
+      header: {
+        user: "用户名",
+        email: "邮箱地址",
+        name: "显示名称",
+        groups: "用户组名称，以逗号分隔",
+        sub: "固定不变的数字用户 ID",
+      },
+      signOut: "站点的退出链接",
+      signOutHint: "只结束该站点上的会话，用户在 Fire ID 中仍保持登录。",
     },
     groups: {
       pageTitle: "用户组",

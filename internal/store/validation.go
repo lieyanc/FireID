@@ -79,5 +79,10 @@ func ValidateDisplayName(name string) error {
 	if len([]rune(name)) > DisplayMaxLen {
 		return fmt.Errorf("%w: display name must be at most %d characters", ErrInvalid, DisplayMaxLen)
 	}
+	for _, r := range name {
+		if r < 0x20 || r == 0x7f {
+			return fmt.Errorf("%w: display name must not contain control characters", ErrInvalid)
+		}
+	}
 	return nil
 }

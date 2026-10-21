@@ -25,11 +25,15 @@ export const qk = {
   passkeys: ["account", "passkeys"] as const,
   sessions: ["account", "sessions"] as const,
   apps: ["admin", "apps"] as const,
+  // Keys under an app's own are invalidated along with it, since TanStack
+  // Query matches by prefix.
   app: (slug: string) => ["admin", "apps", slug] as const,
   appMembers: (slug: string) => ["admin", "apps", slug, "members"] as const,
   appGroups: (slug: string) => ["admin", "apps", slug, "groups"] as const,
   accessRequests: (slug: string) =>
     ["admin", "apps", slug, "access-requests"] as const,
+  forwardAuth: (slug: string) =>
+    ["admin", "apps", slug, "forward-auth"] as const,
   groups: ["admin", "groups"] as const,
   group: (id: number) => ["admin", "groups", id] as const,
   groupMembers: (id: number) => ["admin", "groups", id, "members"] as const,

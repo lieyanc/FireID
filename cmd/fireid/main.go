@@ -188,6 +188,7 @@ func housekeeping(ctx context.Context, st *store.Store) {
 				{"access tokens", st.DeleteExpiredAccessTokens},
 				{"refresh tokens", st.DeleteExpiredRefreshTokens},
 				{"email sign-in tokens", st.DeleteExpiredCredentialTokens},
+				{"forward-auth sessions", st.DeleteExpiredForward},
 			} {
 				if n, err := job.run(); err != nil {
 					slog.Warn("could not delete expired "+job.what, "err", err)
