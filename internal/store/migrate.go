@@ -11,7 +11,7 @@ var schemaSQL string
 
 // schemaVersion is bumped whenever incrementalColumns grows, so an operator can
 // tell from the database which build last touched it.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // incrementalColumns are added to existing tables on upgrade. Adding a column
 // here (rather than editing migrate.sql) is what keeps old databases working.
@@ -35,6 +35,12 @@ var incrementalColumns = []struct {
 	{"users", "totp_last_step", "INTEGER NOT NULL DEFAULT 0"},
 	{"credential_tokens", "code_hash", "TEXT NOT NULL DEFAULT ''"},
 	{"credential_tokens", "attempts", "INTEGER NOT NULL DEFAULT 0"},
+	// v4: passkeys — the per-account user handle and the credential details
+	// a later metadata check needs.
+	{"users", "webauthn_id", "TEXT NOT NULL DEFAULT ''"},
+	{"webauthn_credentials", "attestation_type", "TEXT NOT NULL DEFAULT ''"},
+	{"webauthn_credentials", "attestation_format", "TEXT NOT NULL DEFAULT ''"},
+	{"webauthn_credentials", "user_verified", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // incrementalIndexes cover incremental columns. They run after the columns
@@ -43,6 +49,7 @@ var incrementalColumns = []struct {
 var incrementalIndexes = []string{
 	`CREATE INDEX IF NOT EXISTS idx_auth_codes_auth_request ON auth_codes(auth_request_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_auth_request ON refresh_tokens(auth_request_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_webauthn_id ON users(webauthn_id) WHERE webauthn_id <> ''`,
 }
 
 // migrate applies the schema, then any incremental columns, then records the

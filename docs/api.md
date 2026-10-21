@@ -26,7 +26,10 @@ Conventions:
 ```
 
 `acr` values are `urn:fireid:loa:1` (one factor) and `urn:fireid:loa:2` (two
-factors). `amr` entries are `pwd`, `otp` and `email`.
+factors). `amr` entries are `pwd`, `otp`, `email` and `webauthn`. A passkey
+sign-in is `amr: ["webauthn"]` with `loa:2`: the server requires the
+authenticator to verify the person (PIN, biometric) and refuses an answer
+without it.
 
 `SignedIn` — every endpoint that completes a sign-in returns this with `200`:
 
@@ -53,6 +56,46 @@ person is signed in but the app's request cannot continue:
 { "challenge": "totp_enrol" }  // policy requires TOTP and the account has none yet
 ```
 
+`Ceremony` — the start of a passkey prompt, `200`:
+
+```json
+{
+  "publicKey": { "challenge": "…", "rpId": "id.example.com", "…": "…" },
+  "ceremonyId": "…"
+}
+```
+
+Pass `publicKey` to `navigator.credentials.get()` / `.create()` (binary fields
+are base64url), then post the browser's answer back with the same `ceremonyId`.
+A ceremony is single-use, lives in server memory for six minutes and does not
+survive a restart. Passkeys need a host name issuer: with an IP address issuer
+the passkey endpoints answer `404 passkeys_unavailable`.
+
+`Passkey`:
+
+```json
+{
+  "id": 3, "name": "MacBook", "createdAt": "2026-10-21T08:00:00Z", "lastUsedAt": "",
+  "backupEligible": true, "backupState": true
+}
+```
+
+`name` is `""` until the person names it (at most 64 characters); `lastUsedAt` is
+`""` until the first sign-in with it. `backupEligible`/`backupState` say whether
+the authenticator may sync the passkey and whether it currently is synced.
+
+`SessionInfo`:
+
+```json
+{
+  "id": 12, "createdAt": "2026-10-21T08:00:00Z", "lastSeenAt": "2026-10-21T09:30:00Z",
+  "expiresAt": "2026-11-20T08:00:00Z", "ip": "203.0.113.7",
+  "userAgent": "Mozilla/5.0 …", "amr": ["webauthn"], "current": true
+}
+```
+
+`current` marks the session making the request.
+
 ## Setup and session
 
 | Method | Path | Body | Result |
@@ -73,6 +116,22 @@ person is signed in but the app's request cannot continue:
 
 `uri` is an `otpauth://` URI to render as a QR code; `secret` is the same key
 for manual entry.
+
+## Passkey sign-in
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/auth/login/passkey/begin` | `{}` | `Ceremony` for `navigator.credentials.get()`. `404 passkeys_unavailable` |
+| POST | `/api/auth/login/passkey/finish` | `{ceremonyId, response, authReqId?}` | `SignedIn`. `401 invalid_ceremony` (unknown, used or expired: start again), `401 invalid_credentials` (also for a passkey the server does not know), `429 rate_limited` |
+
+The sign-in is usernameless: no account is named up front, and the browser
+offers the passkeys it holds for this site. `response` is the
+`PublicKeyCredential` from `navigator.credentials.get()` with every binary field
+base64url-encoded. The server requires user verification. A passkey sign-in
+completes without a TOTP step. Unknown passkeys count towards a per-address
+rate limit. Two assertions racing on the same credential (a replay) cannot both
+pass: the loser gets `invalid_credentials`, as does an assertion for a disabled
+account.
 
 ## Email sign-in
 
@@ -102,6 +161,52 @@ A successful email sign-in also verifies the address.
 
 All four answer `401 invalid_code` for a wrong code and `401 invalid_credentials`
 for a wrong password.
+
+## Account passkeys (signed in)
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/api/account/passkeys/begin` | `{password?}` | `Ceremony` for `navigator.credentials.create()`. `password` is required when the account has one; `401 invalid_credentials` when wrong. `404 passkeys_unavailable` |
+| POST | `/api/account/passkeys/finish` | `{ceremonyId, name, response}` | `201 {passkey}`. `401 invalid_ceremony`, `401 invalid_credentials` (the browser's answer does not verify), `400 invalid` (name over 64 characters), `409 conflict` (this passkey is already registered) |
+| GET | `/api/account/passkeys` | | `{passkeys: [Passkey]}` |
+| POST | `/api/account/passkeys/:id/rename` | `{name}` | `204`. `404 not_found`, `400 invalid` |
+| DELETE | `/api/account/passkeys/:id` | | `204`. `404 not_found`, `409 last_credential` |
+
+A registration ceremony is bound to the account and the browser session that
+started it; finishing it from another session answers `invalid_ceremony`. The
+server asks for a discoverable credential (resident key) with user verification,
+and excludes passkeys the account already has, so the same authenticator cannot
+be registered twice. `response` is the `PublicKeyCredential` from
+`navigator.credentials.create()`, binary fields base64url-encoded.
+
+`last_credential` means the passkey is the account's only way to sign in (no
+password and no other passkey) and email sign-in is off, so removing it would
+lock the account out. Set a password or add another passkey first. With email
+sign-in on, the last passkey may go: an emailed link still reaches the account.
+A security notice is emailed when a passkey is added or removed and when the
+password changes.
+
+`404 not_found` covers a passkey that does not exist and one that belongs to
+another account.
+
+## Account management (signed in)
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/api/account/sessions` | | `{sessions: [SessionInfo]}`, live sessions only, most recently active first |
+| DELETE | `/api/account/sessions/:id` | | `204`. `404 not_found`, `409 cannot_revoke_current` (use `/api/auth/logout` instead) |
+| PATCH | `/api/account/profile` | `{displayName}` | `204`. `400 invalid` |
+| POST | `/api/account/password` | `{currentPassword?, newPassword}` | `204`. `401 invalid_credentials`, `400 weak_password`, `429 rate_limited` |
+
+Revoking a session signs that browser out at its next request. `404 not_found`
+covers a session that does not exist, belongs to another account, or has already
+ended.
+
+Changing the password keeps the session that made the change signed in. Every
+other session of the account is revoked, and so is every refresh token issued to
+applications. `currentPassword` is required when the account has a password;
+an account without one sets its first password this way. The username and email
+address are not editable here.
 
 ## Browser routes
 

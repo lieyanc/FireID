@@ -4,10 +4,14 @@ import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
 import { InfoList } from "@/components/common/info-list"
+import { PasskeysCard } from "@/features/account/passkeys-card"
+import { ProfileActions } from "@/features/account/profile-section"
+import { SessionsCard } from "@/features/account/sessions-card"
 import { TwoStepCard } from "@/features/account/two-step-card"
 import { useI18n, type MessageKey } from "@/i18n"
 import { useMe } from "@/lib/queries"
@@ -18,6 +22,7 @@ const AMR_LABELS: Record<string, MessageKey> = {
   pwd: "account.session.amr.pwd",
   otp: "account.session.amr.otp",
   email: "account.session.amr.email",
+  webauthn: "account.session.amr.webauthn",
 }
 
 const ACR_LABELS: Record<string, MessageKey> = {
@@ -46,6 +51,8 @@ export default function HomePage() {
       <div className="grid gap-6 md:grid-cols-2">
         <SessionCard me={me} />
         <TwoStepCard user={me.user} recoveryCodesLeft={me.recoveryCodesLeft} />
+        <PasskeysCard user={me.user} />
+        <SessionsCard />
       </div>
     </>
   )
@@ -110,6 +117,9 @@ function ProfileCard({ user }: { user: User }) {
           ]}
         />
       </CardContent>
+      <CardFooter>
+        <ProfileActions user={user} />
+      </CardFooter>
     </Card>
   )
 }

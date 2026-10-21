@@ -22,8 +22,9 @@ Early development. The configuration, storage, session and credential layers and
 the OIDC provider core (authorization code with PKCE, refresh-token rotation,
 userinfo, introspection, revocation, RP-initiated logout) and the sign-in product
 (setup, password, TOTP with recovery codes, email code / magic link, an English and
-Chinese web UI) are in place; passkeys and account management are next. See [docs/DESIGN.md](docs/DESIGN.md)
-for the design and the build order.
+Chinese web UI) are in place, as are passkeys and self-service account management
+(profile, password change, active sessions). Apps, owners and groups are next. See
+[docs/DESIGN.md](docs/DESIGN.md) for the design and the build order.
 
 ## Quick start
 

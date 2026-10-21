@@ -11,6 +11,11 @@ export const common = defineMessages({
       copy: "Copy",
       copied: "Copied",
       retry: "Retry",
+      save: "Save",
+      saving: "Saving…",
+      rename: "Rename",
+      delete: "Delete",
+      deleting: "Deleting…",
     },
     states: {
       never: "Never",
@@ -45,6 +50,21 @@ export const common = defineMessages({
         "Two-step verification was turned off for this account. Sign in again.",
       totp_enrol_required:
         "This account must set up two-step verification first. Sign in with your password to do that.",
+      invalid_ceremony: "The passkey prompt expired. Try again.",
+      cannot_revoke_current:
+        "You cannot sign out this device from here. Use Sign out instead.",
+      last_credential:
+        "This is your only way to sign in. Add a password or another passkey before removing it.",
+      not_found: "That item no longer exists. Reload the page.",
+      passkeys_unavailable: "Passkeys are not available on this server.",
+      webauthn_cancelled: "The passkey prompt was closed or timed out.",
+      webauthn_not_supported:
+        "This browser or device does not support passkeys.",
+      webauthn_already_registered:
+        "This device already has a passkey for your account.",
+      webauthn_security:
+        "The browser refused the passkey request for this address.",
+      webauthn_failed: "The passkey could not be used. Try again.",
     },
     copyFailed: "Could not copy to the clipboard",
   },
@@ -58,6 +78,11 @@ export const common = defineMessages({
       copy: "复制",
       copied: "已复制",
       retry: "重试",
+      save: "保存",
+      saving: "保存中…",
+      rename: "重命名",
+      delete: "删除",
+      deleting: "删除中…",
     },
     states: {
       never: "从未",
@@ -85,6 +110,17 @@ export const common = defineMessages({
       forbidden: "你没有权限执行此操作。",
       second_factor_not_required: "此账户的两步验证已关闭，请重新登录。",
       totp_enrol_required: "此账户需要先设置两步验证，请使用密码登录完成设置。",
+      invalid_ceremony: "通行密钥验证已过期，请重试。",
+      cannot_revoke_current: "无法在此处退出当前设备，请使用“退出登录”。",
+      last_credential:
+        "这是你唯一的登录方式。请先设置密码或添加其他通行密钥，再删除它。",
+      not_found: "该项目已不存在，请刷新页面。",
+      passkeys_unavailable: "此服务器未开启通行密钥。",
+      webauthn_cancelled: "通行密钥验证已取消或超时。",
+      webauthn_not_supported: "此浏览器或设备不支持通行密钥。",
+      webauthn_already_registered: "此设备已有你账户的通行密钥。",
+      webauthn_security: "浏览器拒绝了此网址的通行密钥请求。",
+      webauthn_failed: "无法使用通行密钥，请重试。",
     },
     copyFailed: "无法复制到剪贴板",
   },

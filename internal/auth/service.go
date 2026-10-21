@@ -41,6 +41,8 @@ type Service struct {
 	issuer   string
 	// mailWG tracks deliveries in flight, so tests can wait for them.
 	mailWG sync.WaitGroup
+	// ceremonies holds the pending WebAuthn exchanges.
+	ceremonies *ceremonies
 
 	now func() time.Time
 }
@@ -82,6 +84,7 @@ func New(st *store.Store, box *secretbox.Box, cfg Config, log *slog.Logger) (*Se
 		mailIP:   NewThrottle(ThrottleOptions{Free: 9}),
 		now:      func() time.Time { return time.Now().UTC() },
 	}
+	s.ceremonies = newCeremonies(s.now)
 	if err := s.refreshSetupToken(); err != nil {
 		return nil, err
 	}

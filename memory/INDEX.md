@@ -7,3 +7,4 @@ One fact per file. Format: `- [Title](file.md) — one-line hook`.
 - [Where access is decided](access-decision.md) — only store.CanUseApp answers "may this user use this app"
 - [pkg/op pitfalls](zitadel-op-pitfalls.md) — JWKS key leak, nil scope funcs panic, ErrInvalidRefreshToken, loose native redirect check, hardcoded discovery
 - [Stage 3 pitfalls](stage3-pitfalls.md) — atomic attempt budgets, bind TOTP confirm to the secret, pending users and 2FA, trustProxyHeaders default, CSP, dev proxy Origin, reauth=1 loop
+- [Stage 4 pitfalls](stage4-pitfalls.md) — no passkeys on an IP issuer, replay guard uses the stored counter, counter 0 is fine, UV required, in-memory ceremonies, migration test drops indexes

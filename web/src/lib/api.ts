@@ -1,6 +1,9 @@
 import type {
+  AccountSession,
   ApiErrorBody,
   Me,
+  Passkey,
+  PasskeyCeremony,
   RecoveryCodes,
   SetupState,
   SignedIn,
@@ -9,6 +12,12 @@ import type {
   User,
   VersionInfo,
 } from "@/lib/types"
+import type {
+  AssertionResponseJSON,
+  CreationOptionsJSON,
+  RegistrationResponseJSON,
+  RequestOptionsJSON,
+} from "@/lib/webauthn"
 
 export class ApiError extends Error {
   readonly status: number
@@ -147,6 +156,15 @@ export const api = {
     }) => post<Record<string, never>>("/api/auth/email/start", body),
     emailVerify: (body: EmailVerifyBody) =>
       post<SignInResult>("/api/auth/email/verify", body),
+    passkeyBegin: () =>
+      post<PasskeyCeremony<RequestOptionsJSON>>(
+        "/api/auth/login/passkey/begin"
+      ),
+    passkeyFinish: (body: {
+      ceremonyId: string
+      response: AssertionResponseJSON
+      authReqId?: string
+    }) => post<SignedIn>("/api/auth/login/passkey/finish", body),
   },
   account: {
     enrolTotp: (password?: string) =>
@@ -157,5 +175,33 @@ export const api = {
       post<void>("/api/account/totp/disable", { code }),
     regenerateRecoveryCodes: (code: string) =>
       post<RecoveryCodes>("/api/account/recovery-codes", { code }),
+    passkeys: {
+      list: () => get<{ passkeys: Passkey[] }>("/api/account/passkeys"),
+      begin: (password?: string) =>
+        post<PasskeyCeremony<CreationOptionsJSON>>(
+          "/api/account/passkeys/begin",
+          { password }
+        ),
+      finish: (body: {
+        ceremonyId: string
+        name: string
+        response: RegistrationResponseJSON
+      }) => post<{ passkey: Passkey }>("/api/account/passkeys/finish", body),
+      rename: (id: number, name: string) =>
+        post<void>(`/api/account/passkeys/${id}/rename`, { name }),
+      delete: (id: number) =>
+        request<void>("DELETE", `/api/account/passkeys/${id}`),
+    },
+    sessions: {
+      list: () => get<{ sessions: AccountSession[] }>("/api/account/sessions"),
+      revoke: (id: number) =>
+        request<void>("DELETE", `/api/account/sessions/${id}`),
+    },
+    updateProfile: (displayName: string) =>
+      request<void>("PATCH", "/api/account/profile", {
+        body: { displayName },
+      }),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      post<void>("/api/account/password", { currentPassword, newPassword }),
   },
 }

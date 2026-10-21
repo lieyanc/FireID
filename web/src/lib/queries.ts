@@ -22,6 +22,8 @@ export const qk = {
   setup: ["setup"] as const,
   me: ["auth", "me"] as const,
   version: ["version"] as const,
+  passkeys: ["account", "passkeys"] as const,
+  sessions: ["account", "sessions"] as const,
 }
 
 export const setupQuery = queryOptions({

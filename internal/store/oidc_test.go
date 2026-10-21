@@ -279,6 +279,7 @@ func TestMigrateUpgradesV1Database(t *testing.T) {
 	for _, stmt := range []string{
 		`DROP INDEX idx_auth_codes_auth_request`,
 		`DROP INDEX idx_refresh_tokens_auth_request`,
+		`DROP INDEX idx_users_webauthn_id`,
 	} {
 		if _, err := st.db.Exec(stmt); err != nil {
 			t.Fatal(err)

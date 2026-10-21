@@ -254,10 +254,13 @@ const (
 	changeTOTPOn = iota
 	changeTOTPOff
 	changeRecoveryCodes
+	changePasskeyAdded
+	changePasskeyRemoved
+	changePasswordChanged
 )
 
-// notifySecurityChange emails the account about a change to its second
-// factor, so a person whose password was used by someone else finds out.
+// notifySecurityChange emails the account about a change to how it signs in,
+// so a person whose password was used by someone else finds out.
 // Nothing is sent when email is not configured or the address is unverified.
 func (s *Service) notifySecurityChange(user *store.User, change int) {
 	if !s.EmailEnabled() || user.Status != store.UserActive {
@@ -271,6 +274,12 @@ func (s *Service) notifySecurityChange(user *store.User, change int) {
 		en, zh = "Two-step verification was turned off", "两步验证已关闭"
 	case changeRecoveryCodes:
 		en, zh = "New recovery codes were generated; the old ones no longer work", "已生成新的恢复码，旧恢复码已失效"
+	case changePasskeyAdded:
+		en, zh = "A passkey was added", "已添加通行密钥"
+	case changePasskeyRemoved:
+		en, zh = "A passkey was removed", "已移除通行密钥"
+	case changePasswordChanged:
+		en, zh = "Your password was changed", "密码已修改"
 	default:
 		return
 	}

@@ -355,7 +355,7 @@ app's policy is `open`, the fact that any active user may sign in.
 | 1 | Repo skeleton, config, SQLite schema, version, Makefile, licence, docs | done |
 | 2 | OIDC provider core on the chosen library — discovery, authorize, token, JWKS, userinfo, introspect, revoke, end_session | done; end-to-end tests in `internal/api/oidc_test.go` |
 | 3 | Product layer: setup flow, sessions, password/TOTP/magic link, UI shell, i18n | done; API in [api.md](api.md), tests in `internal/api/signin_test.go` |
-| 4 | Passkeys, account and session management | |
+| 4 | Passkeys, account and session management | done; API in [api.md](api.md), tests in `internal/api/passkey_test.go`, `account_test.go` |
 | 5 | Apps, owners, groups, registration policies, access requests | |
 | 6 | Forward-auth endpoint and the per-site nginx include | |
 | 7 | Audit log, signing-key rotation, back-channel logout | |

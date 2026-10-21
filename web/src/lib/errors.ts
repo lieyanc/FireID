@@ -2,6 +2,7 @@ import { toast } from "sonner"
 
 import type { Translate } from "@/i18n"
 import { isApiError } from "@/lib/api"
+import { webauthnErrorMessage } from "@/lib/webauthn"
 
 // API error codes the UI has its own wording for; anything else falls back to
 // the server's English message.
@@ -23,6 +24,11 @@ const KNOWN_CODES = [
   "forbidden",
   "second_factor_not_required",
   "totp_enrol_required",
+  "invalid_ceremony",
+  "cannot_revoke_current",
+  "last_credential",
+  "not_found",
+  "passkeys_unavailable",
 ] as const
 
 type KnownCode = (typeof KNOWN_CODES)[number]
@@ -43,6 +49,8 @@ export function errorMessage(error: unknown, t: Translate) {
     if (isKnownCode(error.code)) return t(`common.errors.${error.code}`)
     return error.message
   }
+  const webauthn = webauthnErrorMessage(error, t)
+  if (webauthn) return webauthn
   if (error instanceof Error) return error.message
   return t("common.errors.title")
 }

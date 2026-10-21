@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS users (
     locale           TEXT    NOT NULL DEFAULT '',
     created_at       TEXT    NOT NULL,
     updated_at       TEXT    NOT NULL,
-    last_login_at    TEXT    NOT NULL DEFAULT ''
+    last_login_at    TEXT    NOT NULL DEFAULT '',
+    -- WebAuthn user handle: base64url of 32 random bytes, set when the first
+    -- passkey is registered. Unrelated to id so it reveals nothing.
+    webauthn_id      TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
@@ -52,7 +55,12 @@ CREATE TABLE IF NOT EXISTS webauthn_credentials (
     backup_eligible INTEGER NOT NULL DEFAULT 0,
     backup_state    INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT    NOT NULL,
-    last_used_at  TEXT    NOT NULL DEFAULT ''
+    last_used_at  TEXT    NOT NULL DEFAULT '',
+    -- Kept so a credential can be checked against authenticator metadata later.
+    attestation_type   TEXT NOT NULL DEFAULT '',
+    attestation_format TEXT NOT NULL DEFAULT '',
+    -- 1 once the authenticator has verified the user (PIN or biometric).
+    user_verified INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_webauthn_user ON webauthn_credentials(user_id);

@@ -151,3 +151,93 @@ func (s *Server) accountRecoveryCodes(w http.ResponseWriter, r *http.Request, us
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"recoveryCodes": codes})
 }
+
+// accountSessions lists the account's live sessions, marking this one.
+func (s *Server) accountSessions(w http.ResponseWriter, r *http.Request, sess *store.Session, user *store.User) {
+	sessions, err := s.deps.Store.ListSessions(user.ID, sess.ID)
+	if err != nil {
+		s.failFromStore(w, err, "could not list sessions")
+		return
+	}
+	out := make([]map[string]any, 0, len(sessions))
+	for _, si := range sessions {
+		amr := strings.Fields(si.AMR)
+		if amr == nil {
+			amr = []string{}
+		}
+		out = append(out, map[string]any{
+			"id":         si.ID,
+			"createdAt":  timeText(si.CreatedAt),
+			"lastSeenAt": timeText(si.LastSeenAt),
+			"expiresAt":  timeText(si.ExpiresAt),
+			"ip":         si.IP,
+			"userAgent":  si.UserAgent,
+			"amr":        amr,
+			"current":    si.Current,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// accountSessionRevoke signs one of the account's other browsers out. The
+// current session goes through /api/auth/logout, which also clears the cookie.
+func (s *Server) accountSessionRevoke(w http.ResponseWriter, r *http.Request, sess *store.Session, user *store.User) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	if id == sess.ID {
+		fail(w, http.StatusConflict, "cannot_revoke_current", "use sign out to end this session")
+		return
+	}
+	if err := s.deps.Store.RevokeUserSession(user.ID, id); err != nil {
+		s.failFromStore(w, err, "could not revoke the session")
+		return
+	}
+	s.deps.Log.Info("session revoked by account holder", "userId", user.ID, "sessionId", id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type profileRequest struct {
+	DisplayName string `json:"displayName"`
+}
+
+// accountProfile changes the display name. The username and email address are
+// not editable here.
+func (s *Server) accountProfile(w http.ResponseWriter, r *http.Request, user *store.User) {
+	var req profileRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := s.deps.Store.SetDisplayName(user.ID, req.DisplayName); err != nil {
+		s.failFromStore(w, err, "could not change the display name")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+// accountPassword changes the password. The current one is checked when the
+// account has one, so a borrowed session cannot lock the owner out. This
+// session stays signed in; every other session and every application token is
+// revoked, and the account holder is emailed.
+func (s *Server) accountPassword(w http.ResponseWriter, r *http.Request, sess *store.Session, user *store.User) {
+	var req changePasswordRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	err := s.deps.Auth.ChangePassword(user, sess.ID, req.CurrentPassword, req.NewPassword, s.clientIP(r))
+	switch {
+	case err == nil:
+		w.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		fail(w, http.StatusUnauthorized, "invalid_credentials", "that password is not correct")
+	default:
+		// Rate limits, weak_password and store errors.
+		s.failFromAuth(w, err)
+	}
+}

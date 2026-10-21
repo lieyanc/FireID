@@ -25,9 +25,12 @@ type User struct {
 	// TOTPLastStep is the highest time step already accepted.
 	TOTPLastStep int64
 	Locale       string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	LastLoginAt  time.Time
+	// WebAuthnID is the passkey user handle (base64url), "" until the first
+	// passkey is registered.
+	WebAuthnID  string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	LastLoginAt time.Time
 }
 
 // User status values.
@@ -38,7 +41,7 @@ const (
 )
 
 const userColumns = `id, username, email, display_name, status, is_super_admin, password_hash,
-	session_gen, totp_secret_enc, totp_confirmed_at, totp_last_step, locale, created_at, updated_at, last_login_at`
+	session_gen, totp_secret_enc, totp_confirmed_at, totp_last_step, locale, created_at, updated_at, last_login_at, webauthn_id`
 
 func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var u User
@@ -46,7 +49,7 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	var totpConfirmed, createdAt, updatedAt, lastLogin string
 	err := row.Scan(&u.ID, &u.Username, &u.Email, &u.DisplayName, &u.Status, &superAdmin,
 		&u.PasswordHash, &u.SessionGen, &u.TOTPSecretEnc, &totpConfirmed, &u.TOTPLastStep, &u.Locale,
-		&createdAt, &updatedAt, &lastLogin)
+		&createdAt, &updatedAt, &lastLogin, &u.WebAuthnID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -152,17 +155,42 @@ func (s *Store) CreateUser(in NewUser) (*User, error) {
 // the account, on the assumption that a password change means the old
 // credentials may be in someone else's hands.
 func (s *Store) SetPassword(userID int64, hash string) error {
+	return s.ChangePassword(userID, hash, 0)
+}
+
+// ChangePassword is SetPassword for the account holder: the session keepID,
+// the one that made the change, stays signed in. Every other session and every
+// token issued to an application is revoked.
+func (s *Store) ChangePassword(userID int64, hash string, keepID int64) error {
 	return s.inTx(func(tx *sql.Tx) error {
 		now := s.nowText()
 		if _, err := tx.Exec(`UPDATE users SET password_hash = ?, session_gen = session_gen + 1,
 			updated_at = ? WHERE id = ?`, hash, now, userID); err != nil {
 			return fmt.Errorf("set password: %w", err)
 		}
-		if err := s.revokeSessionsTx(tx, userID, now); err != nil {
-			return err
+		if _, err := tx.Exec(`UPDATE sessions SET revoked_at = ?
+			WHERE user_id = ? AND id <> ? AND revoked_at = ''`, now, userID, keepID); err != nil {
+			return fmt.Errorf("revoke sessions: %w", err)
 		}
 		return s.revokeRefreshTokensTx(tx, userID, "password changed", now)
 	})
+}
+
+// SetDisplayName changes the name shown instead of the username.
+func (s *Store) SetDisplayName(userID int64, name string) error {
+	name = strings.TrimSpace(name)
+	if err := ValidateDisplayName(name); err != nil {
+		return err
+	}
+	res, err := s.db.Exec(`UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?`,
+		name, s.nowText(), userID)
+	if err != nil {
+		return fmt.Errorf("set display name: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ClearPassword removes the stored hash, which a passkey-only account can do.

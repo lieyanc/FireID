@@ -170,6 +170,17 @@ func (s *Server) routes() {
 	h("POST /api/account/totp/confirm", s.guard(false, s.accountTOTPConfirm))
 	h("POST /api/account/totp/disable", s.guard(false, s.accountTOTPDisable))
 	h("POST /api/account/recovery-codes", s.guard(false, s.accountRecoveryCodes))
+	h("POST /api/auth/login/passkey/begin", s.passkeyLoginBegin)
+	h("POST /api/auth/login/passkey/finish", s.passkeyLoginFinish)
+	h("POST /api/account/passkeys/begin", s.guardSession(s.accountPasskeysBegin))
+	h("POST /api/account/passkeys/finish", s.guardSession(s.accountPasskeysFinish))
+	h("GET /api/account/passkeys", s.guard(false, s.accountPasskeys))
+	h("POST /api/account/passkeys/{id}/rename", s.guard(false, s.accountPasskeyRename))
+	h("DELETE /api/account/passkeys/{id}", s.guard(false, s.accountPasskeyDelete))
+	h("GET /api/account/sessions", s.guardSession(s.accountSessions))
+	h("DELETE /api/account/sessions/{id}", s.guardSession(s.accountSessionRevoke))
+	h("PATCH /api/account/profile", s.guard(false, s.accountProfile))
+	h("POST /api/account/password", s.guardSession(s.accountPassword))
 	// The provider sends the browser here with a pending authorization
 	// request; the form endpoint is the no-JavaScript sign-in for it.
 	h("GET /login", s.oidcLogin)
@@ -763,6 +774,24 @@ func (s *Server) guard(needSuperAdmin bool, fn func(http.ResponseWriter, *http.R
 			return
 		}
 		fn(w, r, user)
+	}
+}
+
+// guardSession is guard for handlers that act on the browser session itself
+// (binding a passkey ceremony to it, listing or keeping it), so they also
+// receive the session.
+func (s *Server) guardSession(fn func(http.ResponseWriter, *http.Request, *store.Session, *store.User)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.crossSite(r) {
+			fail(w, http.StatusForbidden, "cross_site", "cross-site requests are not accepted")
+			return
+		}
+		sess, user, err := s.deps.Auth.SessionUser(r)
+		if err != nil {
+			fail(w, http.StatusUnauthorized, "unauthenticated", "sign in to continue")
+			return
+		}
+		fn(w, r, sess, user)
 	}
 }
 

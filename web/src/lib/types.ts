@@ -82,3 +82,39 @@ export type VersionInfo = {
   commit: string
   buildTime: string
 }
+
+/** A registered passkey (GET /api/account/passkeys). */
+export type Passkey = {
+  id: number
+  /** "" when the person never named it; the UI shows a default. */
+  name: string
+  createdAt: string
+  /** "" when it has never been used to sign in. */
+  lastUsedAt: string
+  /** The authenticator may sync the passkey to other devices. */
+  backupEligible: boolean
+  /** The passkey is currently synced (backed up). */
+  backupState: boolean
+}
+
+/** A signed-in browser session (GET /api/account/sessions). */
+export type AccountSession = {
+  id: number
+  createdAt: string
+  lastSeenAt: string
+  ip: string
+  userAgent: string
+  /**
+   * Authentication methods: "pwd", "otp", "email", "webauthn", … The store
+   * keeps them space-separated, so a bare string is accepted too.
+   */
+  amr: string[] | string
+  /** True for the session making the request. */
+  current: boolean
+}
+
+/** Options for a passkey prompt, plus the id the answer is posted back with. */
+export type PasskeyCeremony<Options> = {
+  publicKey: Options
+  ceremonyId: string
+}

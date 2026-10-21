@@ -1,0 +1,51 @@
+import { defineMessages } from "@/i18n/define"
+
+export const sessions = defineMessages({
+  en: {
+    title: "Signed-in devices",
+    description: "Browsers where your account is signed in.",
+    thisDevice: "This device",
+    unknownDevice: "Unknown browser",
+    unknownIp: "Unknown address",
+    signedIn: "Signed in {date}",
+    lastActive: "Active {date}",
+    empty: "No other devices are signed in.",
+    revoke: "Sign out",
+    revoking: "Signing out…",
+    revokeLabel: "Sign out {device}",
+    revoked: "Device signed out",
+    revokeOthers: "Sign out everywhere else",
+    revokeOthersDialog: {
+      title: "Sign out all other devices?",
+      description:
+        "{count} other sessions will be signed out. This device stays signed in.",
+      submit: "Sign out others",
+      submitting: "Signing out…",
+      done: "Other devices signed out",
+      partial: "Signed out {done} of {total} devices. Try again for the rest.",
+    },
+  },
+  zh: {
+    title: "已登录的设备",
+    description: "当前登录着你账户的浏览器。",
+    thisDevice: "此设备",
+    unknownDevice: "未知浏览器",
+    unknownIp: "未知地址",
+    signedIn: "登录于 {date}",
+    lastActive: "活跃于 {date}",
+    empty: "没有其他已登录的设备。",
+    revoke: "退出",
+    revoking: "正在退出…",
+    revokeLabel: "退出 {device}",
+    revoked: "已退出该设备",
+    revokeOthers: "退出其他所有设备",
+    revokeOthersDialog: {
+      title: "退出其他所有设备？",
+      description: "其他 {count} 个会话将被退出，此设备保持登录。",
+      submit: "退出其他设备",
+      submitting: "正在退出…",
+      done: "已退出其他设备",
+      partial: "已退出 {done}/{total} 个设备，请重试剩余设备。",
+    },
+  },
+})

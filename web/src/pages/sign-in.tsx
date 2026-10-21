@@ -2,7 +2,12 @@ import * as React from "react"
 import { useForm } from "react-hook-form"
 import { Navigate, useSearchParams } from "react-router"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { CircleAlertIcon, InfoIcon, MailIcon } from "lucide-react"
+import {
+  CircleAlertIcon,
+  InfoIcon,
+  KeyRoundIcon,
+  MailIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 import { z } from "zod"
 
@@ -33,6 +38,13 @@ import { api } from "@/lib/api"
 import { errorMessage, hasCode, toastError } from "@/lib/errors"
 import { useMe, useSetupState } from "@/lib/queries"
 import type { TotpEnrolment as Enrolment } from "@/lib/types"
+import {
+  getPasskey,
+  isPasskeyCancelled,
+  markPasskeysUnavailable,
+  passkeysAvailable,
+  usePasskeysOffered,
+} from "@/lib/webauthn"
 
 export default function SignInPage() {
   const { t } = useI18n()
@@ -142,6 +154,8 @@ function PasswordStep({
 }) {
   const { t } = useI18n()
   const [formError, setFormError] = React.useState<string | null>(null)
+  const [passkeyBusy, setPasskeyBusy] = React.useState(false)
+  const passkeysOffered = usePasskeysOffered() && passkeysAvailable()
 
   const schema = React.useMemo(
     () =>
@@ -177,6 +191,35 @@ function PasswordStep({
       form.setFocus("password")
     }
   }
+
+  const signInWithPasskey = async () => {
+    setFormError(null)
+    setPasskeyBusy(true)
+    try {
+      const ceremony = await api.auth.passkeyBegin()
+      const response = await getPasskey(ceremony.publicKey)
+      const result = await api.auth.passkeyFinish({
+        ceremonyId: ceremony.ceremonyId,
+        response,
+        authReqId,
+      })
+      // A passkey is a complete sign-in on its own: no second factor.
+      await flow.finish(result)
+    } catch (error) {
+      setPasskeyBusy(false)
+      if (hasCode(error, "passkeys_unavailable")) {
+        markPasskeysUnavailable()
+        setFormError(t("common.errors.passkeys_unavailable"))
+      } else if (isPasskeyCancelled(error)) {
+        // Closing the browser's prompt is a choice, not a failure.
+      } else if (hasCode(error, "invalid_credentials")) {
+        setFormError(t("passkeys.signIn.failed"))
+      } else {
+        setFormError(errorMessage(error, t))
+      }
+    }
+  }
+  const busy = isSubmitting || passkeyBusy
 
   return (
     <StepCard
@@ -216,24 +259,40 @@ function PasswordStep({
             />
             <FieldError errors={[errors.password]} />
           </Field>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={busy}>
             {isSubmitting && <Spinner data-icon="inline-start" />}
             {isSubmitting
               ? t("auth.signIn.submitting")
               : t("auth.signIn.submit")}
           </Button>
+          {(passkeysOffered || emailLogin) && <FieldSeparator />}
+          {passkeysOffered && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void signInWithPasskey()}
+            >
+              {passkeyBusy ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <KeyRoundIcon data-icon="inline-start" />
+              )}
+              {passkeyBusy
+                ? t("passkeys.signIn.waiting")
+                : t("passkeys.signIn.button")}
+            </Button>
+          )}
           {emailLogin && (
-            <>
-              <FieldSeparator />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => flow.setStep({ kind: "email" })}
-              >
-                <MailIcon data-icon="inline-start" />
-                {t("auth.signIn.useEmail")}
-              </Button>
-            </>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={() => flow.setStep({ kind: "email" })}
+            >
+              <MailIcon data-icon="inline-start" />
+              {t("auth.signIn.useEmail")}
+            </Button>
           )}
         </FieldGroup>
       </form>
