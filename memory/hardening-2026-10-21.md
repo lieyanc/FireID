@@ -32,6 +32,15 @@ Changed:
 - `fireid.db`, `-wal`, `-shm` forced to 0600; an existing group/other-readable
   `config.json` or `master.key` is tightened (best effort, a read-only mount is not
   fatal); `master.key` is created with O_EXCL.
+- Protocol error answers corrected in `Provider.ServeHTTP` (test
+  `TestProtocolErrorAnswers`): userinfo refusals are 401 + `WWW-Authenticate: Bearer`
+  (the library said 403 when storage refused the token, so a blocked user now gets 401);
+  401 after Basic auth carries `WWW-Authenticate: Basic`; `/revoke` without `token` is
+  400; `request`/`request_uri` are refused through a context marker that
+  `CreateAuthRequest` returns after the redirect-URI check (the library ignored
+  `request_uri`); `unauthorized_client` at the authorization endpoint becomes
+  `unsupported_response_type` (the library uses it only for the response-type check);
+  `iss` goes in the fragment when the response does.
 
 Left, deliberately:
 

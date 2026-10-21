@@ -51,6 +51,127 @@ func TestAuthorizeCallbackBoundToApprovingSession(t *testing.T) {
 			t.Fatalf("callback %s", got)
 		}
 	})
+
+	t.Run("prompt=none with a session still gets a code", func(t *testing.T) {
+		p := e.webParams("openid")
+		p.Set("prompt", "none")
+		got := e.authorize(victim, p, false)
+		if got.Host != "rp.example" || got.Query().Get("code") == "" {
+			t.Fatalf("prompt=none: %s", got)
+		}
+	})
+}
+
+// The library's error answers differ from RFC 6749, RFC 6750 and RFC 7009 in
+// a few places; Provider.ServeHTTP corrects them on the way out.
+func TestProtocolErrorAnswers(t *testing.T) {
+	e := newOIDCEnv(t)
+	c := e.signedIn()
+
+	t.Run("userinfo refusals are 401 with a Bearer challenge", func(t *testing.T) {
+		_, tok := e.exchangeWeb(e.authorize(c, e.webParams("openid"), false).Query().Get("code"))
+		revoked, _ := tok["access_token"].(string)
+		if resp, _ := e.postForm(http.DefaultClient, "/revoke", url.Values{"token": {revoked}},
+			e.web.ClientID, e.webSecret); resp.StatusCode != http.StatusOK {
+			t.Fatalf("revoke: %d", resp.StatusCode)
+		}
+		for _, tc := range []struct{ name, auth, challenge string }{
+			{"no token", "", `Bearer realm="` + e.issuer + `"`},
+			{"another scheme", "Basic Zm9vOmJhcg==", `Bearer realm="` + e.issuer + `"`},
+			{"malformed token", "Bearer not-a-token", `Bearer realm="` + e.issuer + `", error="invalid_token"`},
+			{"revoked token", "Bearer " + revoked, `Bearer realm="` + e.issuer + `", error="invalid_token"`},
+		} {
+			req, _ := http.NewRequest(http.MethodGet, e.issuer+"/userinfo", nil)
+			if tc.auth != "" {
+				req.Header.Set("Authorization", tc.auth)
+			}
+			r := e.do(http.DefaultClient, req)
+			if r.status != http.StatusUnauthorized || r.header.Get("WWW-Authenticate") != tc.challenge {
+				t.Errorf("%s: %d %q", tc.name, r.status, r.header.Get("WWW-Authenticate"))
+			}
+			if !strings.HasPrefix(r.header.Get("Content-Type"), "application/json") || !strings.Contains(r.body, `"error"`) {
+				t.Errorf("%s: body %q", tc.name, r.body)
+			}
+		}
+	})
+
+	t.Run("a refused Basic client gets a Basic challenge", func(t *testing.T) {
+		form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"x"}}
+		resp, body := e.postForm(http.DefaultClient, "/oauth/token", form, e.web.ClientID, "wrong")
+		if resp.StatusCode != http.StatusUnauthorized || body["error"] != "invalid_client" ||
+			resp.Header.Get("WWW-Authenticate") != `Basic realm="`+e.issuer+`"` {
+			t.Fatalf("%d %v %q", resp.StatusCode, body, resp.Header.Get("WWW-Authenticate"))
+		}
+	})
+
+	t.Run("revocation without a token is invalid_request", func(t *testing.T) {
+		resp, body := e.postForm(http.DefaultClient, "/revoke", url.Values{}, e.web.ClientID, e.webSecret)
+		if resp.StatusCode != http.StatusBadRequest || body["error"] != "invalid_request" {
+			t.Fatalf("%d %v", resp.StatusCode, body)
+		}
+	})
+
+	authzError := func(t *testing.T, p url.Values) url.Values {
+		t.Helper()
+		r := e.authorizeRaw(c, p)
+		loc := r.location(t)
+		if r.status != http.StatusFound || loc.Host != "rp.example" {
+			t.Fatalf("%d %s", r.status, loc)
+		}
+		params := loc.Query()
+		if loc.Fragment != "" {
+			params, _ = url.ParseQuery(loc.Fragment)
+		}
+		if params.Get("state") != "st-1" || params.Get("iss") != e.issuer || params.Has("code") {
+			t.Fatalf("response %s", loc)
+		}
+		return params
+	}
+
+	for _, tc := range []struct{ param, want string }{
+		{"request_uri", "request_uri_not_supported"},
+		{"request", "request_not_supported"},
+	} {
+		t.Run(tc.param+" is refused", func(t *testing.T) {
+			p := e.codeParams()
+			p.Set(tc.param, "https://rp.example/request.jwt")
+			if got := authzError(t, p); got.Get("error") != tc.want || got.Get("error_description") == "" {
+				t.Fatalf("%v", got)
+			}
+		})
+	}
+
+	t.Run("request_uri with an unregistered redirect_uri is not redirected", func(t *testing.T) {
+		p := e.codeParams()
+		p.Set("request_uri", "https://rp.example/request.jwt")
+		p.Set("redirect_uri", "https://evil.example/cb")
+		if r := e.authorizeRaw(c, p); r.status == http.StatusFound {
+			t.Fatalf("redirected to %s", r.header.Get("Location"))
+		}
+	})
+
+	for _, rt := range []string{"token", "code id_token", "bogus"} {
+		t.Run("response_type "+rt+" is unsupported_response_type", func(t *testing.T) {
+			p := e.codeParams()
+			p.Set("response_type", rt)
+			if got := authzError(t, p); got.Get("error") != "unsupported_response_type" {
+				t.Fatalf("%v", got)
+			}
+		})
+	}
+
+	t.Run("iss travels in the fragment with an id_token error", func(t *testing.T) {
+		p := e.codeParams()
+		p.Set("response_type", "id_token")
+		r := e.authorizeRaw(c, p)
+		loc := r.location(t)
+		if loc.Fragment == "" || loc.Query().Has("iss") {
+			t.Fatalf("%s", loc)
+		}
+		if got := authzError(t, p); got.Get("error") != "unsupported_response_type" {
+			t.Fatalf("%v", got)
+		}
+	})
 }
 
 func TestSecurityHeaders(t *testing.T) {

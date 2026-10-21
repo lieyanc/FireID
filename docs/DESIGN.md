@@ -257,13 +257,13 @@ Endpoints:
 
 | Endpoint | Notes |
 |---|---|
-| `/authorize` | Authorization code only. PKCE S256 required for public clients and for apps with `require_pkce`; `plain` is refused. Responses carry `iss` (RFC 9207). |
+| `/authorize` | Authorization code only. PKCE S256 required for public clients and for apps with `require_pkce`; `plain` is refused. Any other `response_type` is `unsupported_response_type`; `request` and `request_uri` are refused (`request_not_supported`, `request_uri_not_supported`). Responses carry `iss` (RFC 9207), beside the other parameters. |
 | `/authorize/callback` | Where the login page sends an approved request; issues the code, only to the browser whose session approved it. |
-| `/oauth/token` | `authorization_code`, `refresh_token`. Client auth: `client_secret_basic`, `client_secret_post`, or `none` for public clients. POST body only; parameters in the URL are refused. |
-| `/userinfo` | `sub`; `name`, `preferred_username`, `updated_at` with `profile`; `email`, `email_verified` with `email`. The token comes in the `Authorization` header or a POST body, never the URL. |
+| `/oauth/token` | `authorization_code`, `refresh_token`. Client auth: `client_secret_basic`, `client_secret_post`, or `none` for public clients. POST body only; parameters in the URL are refused. A refused `client_secret_basic` gets `401` with `WWW-Authenticate: Basic`. |
+| `/userinfo` | `sub`; `name`, `preferred_username`, `updated_at` with `profile`; `email`, `email_verified` with `email`. The token comes in the `Authorization` header or a POST body, never the URL. Any refused token (malformed, expired, revoked, or its owner no longer allowed) is `401` with `WWW-Authenticate: Bearer error="invalid_token"`; no token is `401` with a bare `Bearer` challenge (RFC 6750 3.1). |
 | `/keys` | Published signing keys, public halves only. |
 | `/oauth/introspect` | RFC 7662. The client must authenticate and may only introspect its own tokens. |
-| `/revoke` | RFC 7009. Revoking a refresh token ends the whole grant, including its access tokens. |
+| `/revoke` | RFC 7009. Revoking a refresh token ends the whole grant, including its access tokens. A request without `token` is `400 invalid_request`. |
 | `/end_session` | RP-initiated logout. Signs the browser out only for a valid `id_token_hint` naming the signed-in user. |
 
 Back-channel logout: an app that registers a URI receives a signed logout token

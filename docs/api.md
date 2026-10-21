@@ -20,6 +20,11 @@ Conventions:
 - The provider refuses credentials in the URL: `/oauth/token`,
   `/oauth/introspect` and `/revoke` take a POST body only, and `/userinfo` the
   `Authorization` header or a POST body (`400 invalid_request` otherwise).
+- `/userinfo` refuses with `401` and an RFC 6750 `WWW-Authenticate: Bearer`
+  challenge: `error="invalid_token"` for any token it will not honour, none
+  when no token was sent. A client refused at `/oauth/token`,
+  `/oauth/introspect` or `/revoke` after `client_secret_basic` gets `401` with
+  `WWW-Authenticate: Basic`.
 
 ## Shapes
 
