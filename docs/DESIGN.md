@@ -258,9 +258,9 @@ Endpoints:
 | Endpoint | Notes |
 |---|---|
 | `/authorize` | Authorization code only. PKCE S256 required for public clients and for apps with `require_pkce`; `plain` is refused. Responses carry `iss` (RFC 9207). |
-| `/authorize/callback` | Where the login page sends an approved request; issues the code. |
-| `/oauth/token` | `authorization_code`, `refresh_token`. Client auth: `client_secret_basic`, `client_secret_post`, or `none` for public clients. |
-| `/userinfo` | `sub`; `name`, `preferred_username`, `updated_at` with `profile`; `email`, `email_verified` with `email`. |
+| `/authorize/callback` | Where the login page sends an approved request; issues the code, only to the browser whose session approved it. |
+| `/oauth/token` | `authorization_code`, `refresh_token`. Client auth: `client_secret_basic`, `client_secret_post`, or `none` for public clients. POST body only; parameters in the URL are refused. |
+| `/userinfo` | `sub`; `name`, `preferred_username`, `updated_at` with `profile`; `email`, `email_verified` with `email`. The token comes in the `Authorization` header or a POST body, never the URL. |
 | `/keys` | Published signing keys, public halves only. |
 | `/oauth/introspect` | RFC 7662. The client must authenticate and may only introspect its own tokens. |
 | `/revoke` | RFC 7009. Revoking a refresh token ends the whole grant, including its access tokens. |
@@ -291,7 +291,8 @@ Token rules enforced in `internal/store`:
 - An authorization code is redeemed once, at the first step of the exchange; a failed
   exchange burns it, and a second redemption revokes every token issued from it.
 - A request yields one code. Pending requests expire after 15 minutes.
-- Refresh tokens rotate on every use. Presenting a rotated token revokes the family.
+- Refresh tokens rotate on every use. Presenting a rotated token revokes the family,
+  together with the access tokens it produced.
 - A password change or a disabled account revokes refresh and access tokens.
 - `store.CanUseApp` is asked again on every refresh, userinfo and introspection call.
 
@@ -418,7 +419,7 @@ list or search the directory.
 | 6 | Forward-auth endpoint and the per-site nginx include | done; guide in [forward-auth.md](forward-auth.md), tests in `internal/api/forward_test.go` |
 | 7 | Audit log, signing-key rotation, back-channel logout | done; API in [api.md](api.md#audit-log), tests in `internal/api/audit_test.go`, `keys_test.go`, `backchannel_test.go` |
 | 8 | `client/` module: OIDC client with real id_token verification, trusted-header middleware | done; guide in [client/README.md](../client/README.md), tests in `client/` and `internal/api/client_test.go` |
-| 9 | OpenID conformance-suite run, hardening pass, release pipeline | |
+| 9 | OpenID conformance-suite run, hardening pass, release pipeline | conformance: in-repo walk of the OP test plans in `internal/api/conformance_test.go`, map, known gaps and the steps for the official run in [conformance.md](conformance.md); the official suite has not been run yet |
 
 Stage 8 is worth doing early for any application that already has login code to retire.
 

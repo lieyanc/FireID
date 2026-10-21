@@ -224,12 +224,23 @@ func (s *Store) RevokeRefreshToken(tokenHash, reason string) error {
 	return err
 }
 
-// RevokeRefreshTokenFamily revokes all live tokens in a family.
+// RevokeRefreshTokenFamily revokes all live tokens in a family, together with
+// the access tokens the family produced: ending a grant ends all of it, and
+// after a replay the access tokens are as suspect as the refresh tokens (RFC
+// 9700 section 4.14.2). Every token of a family carries the authorization
+// request it came from, which is what links the access tokens to it.
 func (s *Store) RevokeRefreshTokenFamily(familyID, reason string) error {
-	const q = `UPDATE refresh_tokens SET revoked_at = ?, revoked_reason = ?
-		WHERE family_id = ? AND revoked_at = ''`
-	_, err := s.db.Exec(q, s.nowText(), reason, familyID)
-	return err
+	now := s.nowText()
+	return s.inTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE access_tokens SET revoked_at = ?
+			WHERE revoked_at = '' AND auth_request_id <> '' AND auth_request_id IN
+				(SELECT auth_request_id FROM refresh_tokens WHERE family_id = ?)`, now, familyID); err != nil {
+			return fmt.Errorf("revoke family access tokens: %w", err)
+		}
+		_, err := tx.Exec(`UPDATE refresh_tokens SET revoked_at = ?, revoked_reason = ?
+			WHERE family_id = ? AND revoked_at = ''`, now, reason, familyID)
+		return err
+	})
 }
 
 // RevokeRefreshTokensByAuthRequest revokes every token issued from one

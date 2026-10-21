@@ -14,7 +14,8 @@ friend-owned services. One Go binary, SQLite storage, an embedded web UI, and an
 - **Small.** No external database, no Redis, no Node runtime. The UI is compiled
   into the binary.
 
-Licence: MIT.
+Licence: MIT. Changes: [CHANGELOG.md](CHANGELOG.md). Reporting a vulnerability:
+[SECURITY.md](SECURITY.md).
 
 ## Status
 
@@ -27,8 +28,83 @@ Chinese web UI) are in place, as are passkeys and self-service account managemen
 delegated owners, members, groups, access requests), forward auth for sites
 without a login of their own, the audit log, signing-key rotation and
 back-channel logout, and the [`client/`](client/README.md) module for Go applications.
-Next: an OpenID conformance run, a hardening pass and the release pipeline. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the
-build order.
+Stage 9 added a security hardening pass, a test-by-test walk of the OpenID
+conformance plans ([docs/conformance.md](docs/conformance.md)) and the release
+pipeline behind [the releases](https://github.com/lieyanc/FireID/releases). The
+official conformance suite has not been run yet; that needs Docker and an https
+issuer, and the steps are in that document. See [docs/DESIGN.md](docs/DESIGN.md)
+for the design and the build order.
+
+## Install
+
+Releases are on the [releases page](https://github.com/lieyanc/FireID/releases).
+How they are built and how to check them is in [RELEASING.md](RELEASING.md).
+
+### From a release archive
+
+Static binaries for Linux and macOS on amd64 and arm64, with a `SHA256SUMS` file:
+
+```sh
+VERSION=0.1.0 OS=linux ARCH=amd64     # or darwin / arm64
+base=https://github.com/lieyanc/FireID/releases/download/v$VERSION
+curl -fLO "$base/fireid_${VERSION}_${OS}_${ARCH}.tar.gz"
+curl -fLO "$base/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS   # macOS: shasum -a 256 --check --ignore-missing
+tar -xzf "fireid_${VERSION}_${OS}_${ARCH}.tar.gz"
+sudo mkdir -p /opt/fireid
+sudo install -m 0755 "fireid_${VERSION}_${OS}_${ARCH}/fireid" /opt/fireid/fireid
+```
+
+Then write a configuration (see [Configuration](#configuration)) and run it
+directly or under [systemd](#systemd).
+
+### From the container image
+
+`ghcr.io/lieyanc/fireid` is built for `linux/amd64` and `linux/arm64`, tagged
+with the version (`0.1.0`) and `latest`. It runs as UID `65532` on a distroless
+base and reads `/data/config.json`. `/data` holds the configuration, the
+database and `master.key`, and is the only path it writes, so the root
+filesystem can be read-only.
+
+Inside a container the listener must bind `0.0.0.0`, and `dataDir` should be
+`/data`. Create the configuration before the first start; `server.publicUrl` is
+required:
+
+```sh
+sudo install -d -m 0700 -o 65532 -g 65532 /srv/fireid
+sudo tee /srv/fireid/config.json >/dev/null <<'EOF'
+{
+  "server": { "host": "0.0.0.0", "port": 8099, "publicUrl": "https://id.example.com",
+              "trustProxyHeaders": true },
+  "dataDir": "/data"
+}
+EOF
+sudo chown 65532:65532 /srv/fireid/config.json
+
+docker run -d --name fireid --restart unless-stopped \
+  --read-only --tmpfs /tmp \
+  -v /srv/fireid:/data \
+  -p 127.0.0.1:8099:8099 \
+  ghcr.io/lieyanc/fireid:0.1.0
+docker logs fireid      # the one-time setup token is logged here
+```
+
+Publishing on `127.0.0.1` keeps the reverse proxy the only way in, which is what
+`trustProxyHeaders: true` requires. `-reset-auth` runs as
+`docker run --rm -v /srv/fireid:/data ghcr.io/lieyanc/fireid:0.1.0 -c /data/config.json -reset-auth`
+while the service is stopped. Back up `/srv/fireid` as described under
+[Storage](#storage).
+
+### From source
+
+Go 1.26 and Node 22 with npm:
+
+```sh
+git clone https://github.com/lieyanc/FireID && cd FireID
+make build            # UI into web/dist, static binary into bin/fireid
+make release-local    # or: the four release archives and SHA256SUMS into dist/
+make docker           # or: a local container image (needs Docker)
+```
 
 ## Quick start
 
@@ -155,6 +231,7 @@ make dev-web    # Vite dev server with hot reload, proxying /api
                 # (FIREID_BACKEND, default http://127.0.0.1:8099, must equal server.publicUrl)
 make test       # go vet + go test -race
 make lint       # eslint + tsc
+make check      # what CI runs: gofmt, go vet and race tests for both modules, eslint + tsc
 ```
 
 Repo artifacts — code, comments, commit messages, docs — are written in English.

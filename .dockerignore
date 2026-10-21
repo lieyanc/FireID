@@ -1,0 +1,14 @@
+# Only the sources the image build needs.
+.git
+.github
+.claude
+bin
+dist
+data
+config.json
+fireid
+*.log
+web/node_modules
+web/dist
+client/coverage
+memory

@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -20,8 +21,8 @@ import (
 // their response.
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
-// Argon2id parameters. These follow the OWASP recommendation for a 19 MiB
-// working set: memory 64 MiB, 3 iterations, 2 lanes, 16-byte salt, 32-byte tag.
+// Argon2id parameters: memory 64 MiB, 3 iterations, 2 lanes, 16-byte salt,
+// 32-byte tag. That is above the OWASP minimum (19 MiB, 2 iterations, 1 lane).
 const (
 	argonMemory  = 64 * 1024
 	argonTime    = 3
@@ -29,6 +30,19 @@ const (
 	argonKeyLen  = 32
 	argonSaltLen = 16
 )
+
+// argonSlots bounds how many hashes are computed at once. Each one holds
+// argonMemory for its duration, so a burst of sign-in attempts — which all get
+// past the throttle before the first failure is counted — would otherwise
+// exhaust memory. Callers beyond the limit wait their turn.
+var argonSlots = make(chan struct{}, max(2, runtime.GOMAXPROCS(0)))
+
+// argonKey is argon2.IDKey under argonSlots.
+func argonKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	argonSlots <- struct{}{}
+	defer func() { <-argonSlots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
+}
 
 // HashPassword returns an encoded argon2id hash in the standard
 // $argon2id$v=19$m=...,t=...,p=...$salt$hash form, so parameters travel with
@@ -41,7 +55,7 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("read salt: %w", err)
 	}
-	tag := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	tag := argonKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	return encodeHash(salt, tag), nil
 }
 
@@ -52,7 +66,7 @@ func VerifyPassword(password, encoded string) error {
 	if err != nil {
 		return ErrInvalidCredentials
 	}
-	got := argon2.IDKey([]byte(password), salt, t, m, p, uint32(len(want)))
+	got := argonKey([]byte(password), salt, t, m, p, uint32(len(want)))
 	if subtle.ConstantTimeCompare(got, want) != 1 {
 		return ErrInvalidCredentials
 	}

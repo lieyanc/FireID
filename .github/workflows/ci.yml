@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  # The release workflow runs the same checks before it publishes anything.
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    name: Web UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  go:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+          cache-dependency-path: |
+            go.sum
+            client/go.mod
+      - name: gofmt
+        run: make fmt
+      - name: go vet (both modules)
+        run: make vet
+      - name: go test -race (both modules)
+        run: make race
+      # Embeds the committed web/dist placeholder; the Web UI job checks the bundle.
+      - name: Static build
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o bin/fireid ./cmd/fireid
+          ./bin/fireid -v

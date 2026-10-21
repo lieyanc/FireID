@@ -49,6 +49,9 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	path := filepath.Join(dataDir, DBFileName)
+	if err := restrictFiles(path); err != nil {
+		return nil, err
+	}
 
 	dsn := "file:" + url.PathEscape(path) +
 		"?_pragma=foreign_keys(1)" +
@@ -77,6 +80,26 @@ func Open(dataDir string) (*Store, error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	return s, nil
+}
+
+// restrictFiles makes the database owner-only before SQLite opens it. The
+// file holds password hashes and sealed keys, and SQLite would otherwise create
+// it, and its -wal and -shm companions, with whatever the umask allows; it
+// gives the companions the mode of the main file, so fixing that one is enough
+// for files created later. A data directory that already existed keeps its own
+// mode, which is why the files are checked and not only the directory.
+func restrictFiles(path string) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("open database file: %w", err)
+	}
+	_ = f.Close()
+	for _, p := range []string{path, path + "-wal", path + "-shm"} {
+		if err := os.Chmod(p, 0o600); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("restrict %s: %w", filepath.Base(p), err)
+		}
+	}
+	return nil
 }
 
 // Close releases the database handle.

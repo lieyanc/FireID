@@ -85,7 +85,16 @@ func New(deps Deps) (*Server, error) {
 // every state-changing request, before routing, so a handler that forgets to
 // call crossSite itself cannot open a hole.
 func (s *Server) Handler() http.Handler {
-	return s.withRecover(s.withSecurityHeaders(s.withLogging(s.withCrossSite(s.mux))))
+	return s.withRecover(s.withSecurityHeaders(s.withLogging(s.withCrossSite(withBodyLimit(s.mux)))))
+}
+
+// withBodyLimit caps every request body, including those the OIDC library
+// parses itself: its form parsing would otherwise read up to 10 MB.
+func withBodyLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // withCrossSite rejects unsafe methods that did not originate from this site.
@@ -123,7 +132,10 @@ func (s *Server) Start(addr string) error {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      60 * time.Second,
 		IdleTimeout:       120 * time.Second,
-		ErrorLog:          slog.NewLogLogger(s.deps.Log.Handler(), slog.LevelWarn),
+		// Requests carry a few small cookies and headers; the default 1 MB
+		// is far more than anything legitimate needs.
+		MaxHeaderBytes: 32 << 10,
+		ErrorLog:       slog.NewLogLogger(s.deps.Log.Handler(), slog.LevelWarn),
 	}
 	go func() {
 		if err := s.http.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -264,6 +276,19 @@ func (s *Server) withSecurityHeaders(next http.Handler) http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		// Nothing here uses a camera, a microphone or a location; passkeys
+		// keep their default, which is this origin only.
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		if strings.HasPrefix(s.deps.PublicBase, "https://") {
+			// The issuer is HTTPS, so the browser must never be talked into
+			// plain HTTP for it. Subdomains are the operator's to decide.
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			// API answers are per-person and some carry secrets that appear
+			// once (TOTP secrets, recovery codes, client secrets).
+			h.Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -355,7 +380,8 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if err := s.deps.Auth.CheckSetupToken(req.Token); err != nil {
+	done, err := s.deps.Auth.BeginSetup(req.Token)
+	if err != nil {
 		switch {
 		case errors.Is(err, auth.ErrSetupUnavailable):
 			fail(w, http.StatusConflict, "setup_unavailable", "setup has already been completed")
@@ -364,6 +390,8 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	created := false
+	defer func() { done(created) }()
 	if err := s.deps.Auth.CheckPassword(req.Password); err != nil {
 		fail(w, http.StatusBadRequest, "weak_password", err.Error())
 		return
@@ -392,7 +420,7 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 		s.failFromStore(w, err, "could not create the administrator account")
 		return
 	}
-	s.deps.Auth.ConsumeSetupToken()
+	created = true
 	s.deps.Log.Warn("super administrator created", "userId", user.ID, "username", user.Username)
 	s.auditAccount(r, user, "setup.complete", nil)
 
@@ -431,7 +459,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			writeChallenge(w, sf)
 			return
 		case errors.Is(err, auth.ErrInvalidCredentials):
-			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(req.Username), "ip", ip)
+			s.logSignInFailure(err, ip)
 			s.auditSignInFailure(r, "password", err)
 			fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 			return
@@ -503,13 +531,25 @@ func (s *Server) passwordForSecondStep(w http.ResponseWriter, r *http.Request, u
 		// The second factor was turned off between the two requests.
 		fail(w, http.StatusConflict, "second_factor_not_required", "this account no longer requires a second factor")
 	case errors.Is(err, auth.ErrInvalidCredentials):
-		s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
+		s.logSignInFailure(err, ip)
 		s.auditSignInFailure(r, "password", err)
 		fail(w, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 	default:
 		s.failFromAuth(w, err)
 	}
 	return nil, false
+}
+
+// logSignInFailure records a failed password sign-in. The attempted username
+// is left out: people type their password into the username field, and the
+// log is no place for it. A known account is named by its ID instead.
+func (s *Server) logSignInFailure(err error, ip string) {
+	args := []any{"ip", ip}
+	var f *auth.SignInFailure
+	if errors.As(err, &f) && f.User != nil {
+		args = append(args, "userId", f.User.ID)
+	}
+	s.deps.Log.Info("failed sign-in", args...)
 }
 
 // writeChallenge tells the UI which second step comes next.
@@ -1017,7 +1057,7 @@ func (s *Server) oidcLoginPOST(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, auth.ErrSecondFactorNotConfigured):
 			http.Error(w, "this account must set up two-step verification in the Fire ID web interface first", http.StatusForbidden)
 		case errors.Is(err, auth.ErrInvalidCredentials), errors.Is(err, store.ErrNotFound):
-			s.deps.Log.Info("failed sign-in", "username", store.NormaliseUsername(username), "ip", ip)
+			s.logSignInFailure(err, ip)
 			s.auditSignInFailure(r, "password", err)
 			http.Error(w, "invalid username, password or code", http.StatusUnauthorized)
 		default:

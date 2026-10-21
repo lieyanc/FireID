@@ -158,6 +158,9 @@ func Open(path string) (*Store, State, error) {
 		raw = nil
 	case err != nil:
 		return nil, state, fmt.Errorf("read config: %w", err)
+	default:
+		// The file may hold the SMTP password.
+		ownerOnly(path)
 	}
 
 	cfg := defaults
@@ -418,6 +421,7 @@ func (s *Store) writeLocked() error {
 func (s *Store) MasterKey() ([]byte, error) {
 	path := filepath.Join(s.dataDir, "master.key")
 	if raw, err := os.ReadFile(path); err == nil {
+		ownerOnly(path)
 		key, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(string(raw)))
 		if err != nil {
 			return nil, fmt.Errorf("decode master key: %w", err)
@@ -438,8 +442,30 @@ func (s *Store) MasterKey() ([]byte, error) {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
 	encoded := base64.RawURLEncoding.EncodeToString(key)
-	if err := os.WriteFile(path, []byte(encoded+"\n"), 0o600); err != nil {
+	// O_EXCL: a key that appeared since the read above belongs to another
+	// process and must not be replaced, or what it sealed becomes unreadable.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		return s.MasterKey()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("write master key: %w", err)
+	}
+	if _, err := f.WriteString(encoded + "\n"); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("write master key: %w", err)
+	}
+	if err := f.Close(); err != nil {
 		return nil, fmt.Errorf("write master key: %w", err)
 	}
 	return key, nil
+}
+
+// ownerOnly removes group and other access from a file that holds a secret.
+// It is best effort: a read-only mount, where the operator controls the mode,
+// must not stop the service from starting.
+func ownerOnly(path string) {
+	if info, err := os.Stat(path); err == nil && info.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(path, info.Mode().Perm()&0o700)
+	}
 }

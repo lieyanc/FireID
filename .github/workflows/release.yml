@@ -1,0 +1,137 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  meta:
+    name: Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - id: v
+        name: Check the tag
+        run: |
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH[-PRERELEASE]"
+            exit 1
+          fi
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  ci:
+    name: CI
+    needs: meta
+    uses: ./.github/workflows/ci.yml
+
+  binaries:
+    name: Archives and GitHub release
+    needs: [meta, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.26.x
+          cache-dependency-path: |
+            go.sum
+            client/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Build archives
+        run: make release-local VERSION="$GITHUB_REF_NAME" COMMIT="${GITHUB_SHA::7}"
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="$VERSION" '
+            /^## \[/ { if (p) exit; p = index($0, "## [" v "]") == 1; next }
+            p
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for [$VERSION]"
+            exit 1
+          fi
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # A re-run after a partial failure replaces the assets instead of failing.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS --clobber
+          else
+            flags=()
+            [[ "$PRERELEASE" == true ]] && flags+=(--prerelease)
+            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+              --verify-tag --title "Fire ID $GITHUB_REF_NAME" --notes-file notes.md "${flags[@]}"
+          fi
+
+  image:
+    name: Container image
+    needs: [meta, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to ghcr.io
+        env:
+          TOKEN: ${{ github.token }}
+        run: echo "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+      - id: tags
+        name: Image tags
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/fireid"
+          {
+            echo "tags<<EOF"
+            echo "$image:$VERSION"
+            [[ "$PRERELEASE" == true ]] || echo "$image:latest"
+            echo "EOF"
+            echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "commit=${GITHUB_SHA::7}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ steps.tags.outputs.commit }}
+            BUILD_TIME=${{ steps.tags.outputs.built }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

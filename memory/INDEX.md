@@ -11,3 +11,5 @@ One fact per file. Format: `- [Title](file.md) — one-line hook`.
 - [App management](app-management.md) — CanManageApp only, 404 for apps you cannot manage, owner_user_id vs owner role, registrationMode not enforced yet
 - [Stage 6 forward auth](stage6-forward-auth.md) — per-app cookie via one-time code, host entitled by redirect URI, nginx header inheritance trap, real-nginx check without root
 - [Stage 7 back-channel and audit](stage7-backchannel-audit.md) — revoked_at trigger feeds the outbox, sid via userinfo claims, logout+jwt signer, UI must avoid /keys
+- [Stage 8 client module](stage8-client-module.md) — separate stdlib-only module; cookie hash-bound to issuer+client_id, JWKS keeps stale keys, jti until exp+skew, literal null is a type error
+- [Hardening pass 2026-10-21](hardening-2026-10-21.md) — callback bound to the approving session, family revocation takes access tokens, no-store, no credentials in URLs, setup race, argon2 semaphore, file modes; what was left and why

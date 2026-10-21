@@ -13,6 +13,13 @@ Conventions:
 - State-changing requests from another site are refused with `403 cross_site`.
 - Secrets that must reach the person (TOTP secret, recovery codes, client
   secrets) appear in exactly one response and nowhere else.
+- Every `/api/` response carries `Cache-Control: no-store`, and so do the
+  provider's token, introspection, revocation and userinfo responses.
+- Request bodies are capped at 1 MiB on every endpoint, the provider's
+  included; request headers at 32 KiB.
+- The provider refuses credentials in the URL: `/oauth/token`,
+  `/oauth/introspect` and `/revoke` take a POST body only, and `/userinfo` the
+  `Authorization` header or a POST body (`400 invalid_request` otherwise).
 
 ## Shapes
 

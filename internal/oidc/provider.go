@@ -115,21 +115,212 @@ func NewProvider(st *store.Store, box *secretbox.Box, authSvc *auth.Service, cfg
 	return p, nil
 }
 
-// ServeHTTP serves the provider's endpoints. Three of them are adjusted on the
-// way through: discovery advertises only what is implemented, authorization
-// responses carry the issuer (RFC 9207), and end_session can sign the browser
-// out.
+// ServeHTTP serves the provider's endpoints. Several are adjusted on the way
+// through: discovery advertises only what is implemented, authorization
+// responses carry the issuer (RFC 9207), the callback releases a code only to
+// the browser that approved it, credentials are refused in the URL, and
+// end_session can sign the browser out.
 func (p *Provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if msg := credentialsInURL(r); msg != "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(oidc.ErrInvalidRequest().WithDescription("%s", msg))
+		return
+	}
 	switch r.URL.Path {
+	case "/oauth/token", "/oauth/introspect", "/userinfo", "/revoke":
+		// Responses carry tokens or claims about one person; no cache may
+		// keep them (RFC 6749 section 5.1, OIDC Core section 3.1.3.3). The
+		// library sets neither header.
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
+		if r.URL.Path == "/userinfo" {
+			w = &bearerWriter{ResponseWriter: w, realm: p.issuer, presented: bearerPresented(r)}
+			break
+		}
+		if r.URL.Path == "/revoke" && r.Method == http.MethodPost && !tokenPresented(r) {
+			// The library would look the empty token up and answer 200.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(oidc.ErrInvalidRequest().WithDescription("the token parameter is required"))
+			return
+		}
+		if _, _, ok := r.BasicAuth(); ok {
+			w = &basicWriter{ResponseWriter: w, realm: p.issuer}
+		}
 	case oidc.DiscoveryEndpoint:
 		p.discovery(w, r)
 		return
-	case "/authorize", "/authorize/callback":
+	case "/authorize/callback":
+		if !p.callbackAllowed(r) {
+			http.Error(w, "This sign-in was approved in another browser. Go back to the application and try again.",
+				http.StatusBadRequest)
+			return
+		}
+		w = &issWriter{ResponseWriter: w, issuer: p.issuer}
+	case "/authorize":
+		r = refuseRequestObjects(r)
 		w = &issWriter{ResponseWriter: w, issuer: p.issuer}
 	case "/end_session":
 		r = r.WithContext(context.WithValue(r.Context(), exchangeKey{}, &exchange{w: w, r: r}))
 	}
 	p.op.ServeHTTP(w, r)
+}
+
+// credentialsInURL refuses requests that put a credential in the query
+// string, where it would reach access logs, browser history and Referer. The
+// library reads r.Form, which merges the query with the body, so it would
+// otherwise accept them. The token, introspection and revocation endpoints
+// take POST bodies only (RFC 6749 section 3.2, RFC 7009, RFC 7662); userinfo
+// takes the token in the Authorization header or a POST body (RFC 6750
+// sections 2.1 and 2.2). CORS preflights carry no credentials and pass.
+func credentialsInURL(r *http.Request) string {
+	switch r.URL.Path {
+	case "/oauth/token", "/oauth/introspect", "/revoke":
+		if r.Method != http.MethodPost && r.Method != http.MethodOptions {
+			return "this endpoint accepts POST only"
+		}
+		if r.URL.RawQuery != "" {
+			return "send the parameters in the request body, not the URL"
+		}
+	case "/userinfo":
+		if r.URL.Query().Has("access_token") {
+			return "send the access token in the Authorization header, not the URL"
+		}
+	}
+	return ""
+}
+
+// tokenPresented reports whether a revocation request names a token. The
+// form is parsed here, which the library then reuses.
+func tokenPresented(r *http.Request) bool {
+	if err := r.ParseForm(); err != nil {
+		// Left to the library, which reports the malformed body itself.
+		return true
+	}
+	return r.PostForm.Get("token") != ""
+}
+
+// bearerPresented reports whether a userinfo request carries an access token
+// in either of the places the library looks.
+func bearerPresented(r *http.Request) bool {
+	if h := r.Header.Get("Authorization"); len(h) > len(oidc.PrefixBearer) &&
+		strings.EqualFold(h[:len(oidc.PrefixBearer)], oidc.PrefixBearer) {
+		return true
+	}
+	if r.Method != http.MethodPost || r.ParseForm() != nil {
+		return false
+	}
+	return r.PostForm.Get("access_token") != ""
+}
+
+// bearerWriter turns the library's userinfo refusals into RFC 6750 section 3
+// challenges. The library answers 401 in plain text for a missing or
+// unreadable token and 403 when storage rejects it (revoked, expired, owner
+// blocked or no longer allowed the app); to the client each of these means
+// "get a new token", which is 401 invalid_token. A request with no token at
+// all gets a challenge without an error code, as section 3.1 asks.
+type bearerWriter struct {
+	http.ResponseWriter
+	realm     string
+	presented bool
+	replaced  bool
+}
+
+func (w *bearerWriter) WriteHeader(code int) {
+	if w.replaced {
+		return
+	}
+	if code != http.StatusUnauthorized && code != http.StatusForbidden {
+		w.ResponseWriter.WriteHeader(code)
+		return
+	}
+	w.replaced = true
+	e := oidc.ErrInvalidRequest().WithDescription("an access token is required")
+	challenge := fmt.Sprintf("Bearer realm=%q", w.realm)
+	if w.presented {
+		e = &oidc.Error{ErrorType: "invalid_token", Description: "the access token is invalid, expired or revoked"}
+		challenge += `, error="invalid_token"`
+	}
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Type", "application/json")
+	h.Set("WWW-Authenticate", challenge)
+	w.ResponseWriter.WriteHeader(http.StatusUnauthorized)
+	_ = json.NewEncoder(w.ResponseWriter).Encode(e)
+}
+
+func (w *bearerWriter) Write(b []byte) (int, error) {
+	if w.replaced {
+		return len(b), nil
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// basicWriter adds the challenge RFC 6749 section 5.2 requires when a client
+// that authenticated with the Authorization header is refused. The library
+// answers 401 invalid_client without it.
+type basicWriter struct {
+	http.ResponseWriter
+	realm string
+}
+
+func (w *basicWriter) WriteHeader(code int) {
+	if code == http.StatusUnauthorized && w.Header().Get("WWW-Authenticate") == "" {
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Basic realm=%q", w.realm))
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// refusedParamKey carries the error for a request object the authorization
+// request asked for. The library decides when to report it: CreateAuthRequest
+// returns it once the redirect URI has been checked, so it is redirected to
+// the client with the state like any other request error.
+type refusedParamKey struct{}
+
+// refuseRequestObjects handles request and request_uri (OIDC Core 6), neither
+// of which Fire ID supports. The library ignores request_uri, which would run
+// the flow with parameters the client did not mean, and refuses request
+// without saying why. Both are taken off the form and replaced by the error.
+func refuseRequestObjects(r *http.Request) *http.Request {
+	if err := r.ParseForm(); err != nil {
+		return r
+	}
+	var refused *oidc.Error
+	switch {
+	case r.Form.Has("request_uri"):
+		refused = &oidc.Error{ErrorType: "request_uri_not_supported", Description: "request_uri is not supported"}
+	case r.Form.Has("request"):
+		refused = oidc.ErrRequestNotSupported().WithDescription("request objects are not supported")
+	default:
+		return r
+	}
+	r.Form.Del("request_uri")
+	r.Form.Del("request")
+	return r.WithContext(context.WithValue(r.Context(), refusedParamKey{}, refused))
+}
+
+// callbackAllowed binds the code to the browser that approved the request.
+// The request ID is not a secret — whoever started the flow saw it in the
+// redirect to /login — so without this check someone could start a flow, get
+// a signed-in victim to open the login link, and collect the victim's code
+// from the callback themselves. An approved request is released only to a
+// request carrying the session that approved it; anything else is left to the
+// library, which reports unknown and unapproved requests itself.
+func (p *Provider) callbackAllowed(r *http.Request) bool {
+	// The library reads the ID from the form, body included, so this does too.
+	if err := r.ParseForm(); err != nil {
+		return false
+	}
+	ar, err := p.storage.store.AuthRequestByID(r.Form.Get("id"))
+	if err != nil || !ar.UserID.Valid {
+		return true
+	}
+	if p.auth == nil || ar.SID == "" {
+		return false
+	}
+	sess, _, err := p.auth.SessionUser(r)
+	return err == nil && sess.SID == ar.SID
 }
 
 // discovery serves the metadata document. The library's version lists the
@@ -203,19 +394,43 @@ func (w *issWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
-// addIssuer appends iss to an absolute redirect to a client.
+// addIssuer adds iss to an absolute redirect to a client, beside the other
+// response parameters: in the fragment when they travel there (response_type
+// id_token), otherwise in the query. Registered redirect URIs carry no
+// fragment, so one on the way out holds the response.
+//
+// It also corrects one error code. At the authorization endpoint the library
+// reports a response type the client is not registered for as
+// unauthorized_client, but Fire ID supports code only, so any other type is
+// unsupported_response_type (RFC 6749 section 4.1.2.1).
 func addIssuer(loc, issuer string) string {
 	u, err := url.Parse(loc)
 	if err != nil || !u.IsAbs() || loc == issuer || strings.HasPrefix(loc, issuer+"/") {
 		return loc
 	}
-	q := u.Query()
-	if q.Has("iss") {
-		return loc
+	if u.Fragment != "" {
+		params, err := url.ParseQuery(u.Fragment)
+		if err != nil {
+			return loc
+		}
+		fixAuthzParams(params, issuer)
+		u.Fragment, u.RawFragment = "", ""
+		return u.String() + "#" + params.Encode()
 	}
-	q.Set("iss", issuer)
+	q := u.Query()
+	fixAuthzParams(q, issuer)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func fixAuthzParams(params url.Values, issuer string) {
+	if params.Get("error") == string(oidc.UnauthorizedClient) {
+		params.Set("error", "unsupported_response_type")
+		params.Set("error_description", "only response_type=code is supported")
+	}
+	if !params.Has("iss") {
+		params.Set("iss", issuer)
+	}
 }
 
 // exchange lets storage callbacks reach the HTTP request that caused them.

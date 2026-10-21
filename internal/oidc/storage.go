@@ -76,6 +76,9 @@ func (s *Storage) CreateAuthRequest(ctx context.Context, authReq *oidc.AuthReque
 	if !store.MatchesRedirectURI(app.RedirectURIs, authReq.RedirectURI) {
 		return nil, oidc.ErrInvalidRequestRedirectURI().WithDescription("the redirect_uri is not registered for this client")
 	}
+	if refused, ok := ctx.Value(refusedParamKey{}).(*oidc.Error); ok {
+		return nil, refused
+	}
 
 	if !slices.Contains(authReq.Scopes, oidc.ScopeOpenID) {
 		return nil, oidc.ErrInvalidScope().WithDescription("the openid scope is required")

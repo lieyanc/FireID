@@ -37,8 +37,11 @@ type Service struct {
 	mailAddr *Throttle
 	mailIP   *Throttle
 	mailer   Mailer
-	setup    string
-	issuer   string
+	// setup is the one-time setup token; setupMu guards it and is held for
+	// the whole of a setup attempt, so one token cannot create two accounts.
+	setupMu sync.Mutex
+	setup   string
+	issuer  string
 	// mailWG tracks deliveries in flight, so tests can wait for them.
 	mailWG sync.WaitGroup
 	// ceremonies holds the pending WebAuthn exchanges.
@@ -97,7 +100,11 @@ func (s *Service) SetIssuer(issuer string) { s.issuer = strings.TrimSuffix(issue
 // SetupToken returns the current setup token, or "" when setup is not
 // available. The token is held in memory only: it is never written to disk and
 // never logged anywhere except the one startup line.
-func (s *Service) SetupToken() string { return s.setup }
+func (s *Service) SetupToken() string {
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
+	return s.setup
+}
 
 // refreshSetupToken (re)generates the token when the deployment still needs it.
 func (s *Service) refreshSetupToken() error {
@@ -124,6 +131,8 @@ func (s *Service) refreshSetupToken() error {
 // EnableRecovery clears the setup token so the next start mints a fresh one.
 // It is used by -reset-auth.
 func (s *Service) EnableRecovery() error {
+	s.setupMu.Lock()
+	defer s.setupMu.Unlock()
 	s.setup = ""
 	return s.refreshSetupToken()
 }
@@ -315,19 +324,30 @@ func (s *Service) SignOutByRequest(r *http.Request) error {
 	return s.store.RevokeSessionByToken(token)
 }
 
-// CheckSetupToken compares a submitted setup token in constant time.
-func (s *Service) CheckSetupToken(submitted string) error {
+// BeginSetup compares a submitted setup token in constant time and, when it
+// matches, holds the setup until done is called: done(true) spends the token,
+// done(false) leaves it for another attempt. Concurrent attempts wait, so the
+// second one finds the token spent rather than creating a second account.
+func (s *Service) BeginSetup(submitted string) (done func(used bool), err error) {
+	s.setupMu.Lock()
 	if s.setup == "" {
-		return ErrSetupUnavailable
+		s.setupMu.Unlock()
+		return nil, ErrSetupUnavailable
 	}
 	if subtle.ConstantTimeCompare([]byte(s.setup), []byte(submitted)) != 1 {
-		return ErrInvalidCredentials
+		s.setupMu.Unlock()
+		return nil, ErrInvalidCredentials
 	}
-	return nil
+	var once sync.Once
+	return func(used bool) {
+		once.Do(func() {
+			if used {
+				s.setup = ""
+			}
+			s.setupMu.Unlock()
+		})
+	}, nil
 }
-
-// ConsumeSetupToken invalidates the token after a successful use.
-func (s *Service) ConsumeSetupToken() { s.setup = "" }
 
 // RegisterResult is what a self-registration produces.
 type RegisterResult struct {
@@ -392,7 +412,13 @@ func (s *Service) recordFailure(user *store.User, username, ip string) {
 		s.lockedOut(user, "password", "source", ip, lock)
 	}
 	if lock := s.login.Fail("acct:" + username); lock > 0 {
-		s.log.Warn("login throttled by account", "username", username, "lockout", lock.String())
+		// The attempted name is not logged: it may be a password typed into
+		// the wrong field. An unknown name is reported as such.
+		account := any("unknown")
+		if user != nil {
+			account = user.ID
+		}
+		s.log.Warn("login throttled by account", "userId", account, "lockout", lock.String())
 		s.lockedOut(user, "password", "account", ip, lock)
 	}
 }

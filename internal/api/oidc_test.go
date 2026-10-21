@@ -42,8 +42,10 @@ type oidcEnv struct {
 	st     *store.Store
 	auth   *auth.Service
 	mailer *fakeMailer
-	user   *store.User
-	root   *store.User
+	// logs holds what the server logged at Info and above.
+	logs *logBuffer
+	user *store.User
+	root *store.User
 
 	// web is a confidential client_secret_post app like new-api.
 	web       *store.App
@@ -91,7 +93,8 @@ func newEnvWith(t *testing.T, tweak func(*auth.Config)) *oidcEnv {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logs := &logBuffer{}
+	log := slog.New(slog.NewTextHandler(logs, nil))
 	authCfg := auth.Config{SessionTTL: time.Hour, PasswordMinLength: 10}
 	if tweak != nil {
 		tweak(&authCfg)
@@ -109,7 +112,7 @@ func newEnvWith(t *testing.T, tweak func(*auth.Config)) *oidcEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := &oidcEnv{t: t, ts: ts, issuer: issuer, st: st, auth: authSvc, mailer: mailer}
+	env := &oidcEnv{t: t, ts: ts, issuer: issuer, st: st, auth: authSvc, mailer: mailer, logs: logs}
 	env.user, err = st.CreateUser(store.NewUser{Username: "alice", Email: "alice@example.com",
 		DisplayName: "Alice", PasswordHash: hash, Status: store.UserActive})
 	if err != nil {
