@@ -32,6 +32,7 @@ export type Permissions = {
   manageUsers: boolean
   manageApps: boolean
   ownedApps: boolean
+  createApps: boolean
 }
 
 export type Me = {
@@ -118,3 +119,103 @@ export type PasskeyCeremony<Options> = {
   publicKey: Options
   ceremonyId: string
 }
+
+export type AppClientType = "confidential" | "public"
+export type TokenEndpointAuthMethod =
+  "client_secret_basic" | "client_secret_post" | "none"
+export type AppStatus = "active" | "suspended"
+export type RegistrationMode = "closed" | "invite" | "open" | "admin_approval"
+export type DefaultAccess = "all_users" | "groups" | "members_only"
+
+/** A relying party registered with Fire ID (GET /api/admin/apps). */
+export type App = {
+  id: number
+  slug: string
+  name: string
+  description: string
+  homepageUrl: string
+  clientId: string
+  clientType: AppClientType
+  tokenEndpointAuthMethod: TokenEndpointAuthMethod
+  requirePkce: boolean
+  ownerUserId: number
+  status: AppStatus
+  registrationMode: RegistrationMode
+  defaultAccess: DefaultAccess
+  redirectUris: string[]
+  postLogoutRedirectUris: string[]
+  scopes: string[]
+  grantTypes: string[]
+  /** "" when the secret has never been rotated. */
+  secretRotatedAt: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type MemberRole = "owner" | "admin" | "member"
+export type MemberStatus = "active" | "pending" | "blocked"
+
+export type AppMember = {
+  user: User
+  role: MemberRole
+  status: MemberStatus
+  createdAt: string
+}
+
+export type Group = {
+  id: number
+  name: string
+  description: string
+  memberCount: number
+  createdAt: string
+}
+
+export type GroupRef = Pick<Group, "id" | "name">
+
+/** Someone asking to use an app whose registration needs approval. */
+export type AccessRequest = {
+  id: number
+  user: User
+  message: string
+  createdAt: string
+}
+
+/** GET /api/admin/apps/:slug */
+export type AppDetail = {
+  app: App
+  members: AppMember[]
+  /** Groups whose members may use the app. */
+  groups: GroupRef[]
+  pendingRequests: AccessRequest[]
+  canDelete: boolean
+}
+
+/** Fields POST /api/admin/apps accepts. */
+export type AppCreate = {
+  slug: string
+  name: string
+  description?: string
+  homepageUrl?: string
+  clientType?: AppClientType
+  tokenEndpointAuthMethod?: TokenEndpointAuthMethod
+  redirectUris: string[]
+  postLogoutRedirectUris?: string[]
+  registrationMode?: RegistrationMode
+  defaultAccess?: DefaultAccess
+  ownerUserId?: number
+}
+
+/** Fields PATCH /api/admin/apps/:slug accepts; omitted ones are unchanged. */
+export type AppUpdate = Partial<
+  Pick<
+    App,
+    | "name"
+    | "description"
+    | "homepageUrl"
+    | "tokenEndpointAuthMethod"
+    | "redirectUris"
+    | "postLogoutRedirectUris"
+    | "registrationMode"
+    | "defaultAccess"
+  >
+>

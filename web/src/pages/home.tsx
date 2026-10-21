@@ -1,5 +1,9 @@
+import { ArrowRightIcon } from "lucide-react"
+import { Link } from "react-router"
+
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
@@ -53,8 +57,31 @@ export default function HomePage() {
         <TwoStepCard user={me.user} recoveryCodesLeft={me.recoveryCodesLeft} />
         <PasskeysCard user={me.user} />
         <SessionsCard />
+        {me.permissions.manageApps && <AdminCard />}
       </div>
     </>
+  )
+}
+
+function AdminCard() {
+  const { t } = useI18n()
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t("admin.navigation.homeTitle")}</CardTitle>
+        <CardDescription>
+          {t("admin.navigation.homeDescription")}
+        </CardDescription>
+      </CardHeader>
+      <CardFooter>
+        <Button variant="outline" asChild>
+          <Link to="/apps">
+            {t("admin.navigation.manage")}
+            <ArrowRightIcon data-icon="inline-end" />
+          </Link>
+        </Button>
+      </CardFooter>
+    </Card>
   )
 }
 

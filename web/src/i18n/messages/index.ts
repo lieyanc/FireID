@@ -1,5 +1,6 @@
 import type { MessagePath } from "@/i18n/define"
 import { account } from "@/i18n/messages/account"
+import { admin } from "@/i18n/messages/admin"
 import { auth } from "@/i18n/messages/auth"
 import { common, shell } from "@/i18n/messages/common"
 import { passkeys } from "@/i18n/messages/passkeys"
@@ -14,6 +15,7 @@ const namespaces = {
   account,
   passkeys,
   sessions,
+  admin,
 }
 
 type Namespaces = typeof namespaces

@@ -164,8 +164,9 @@ func (s *Store) ListGroups() ([]*Group, error) {
 
 // CreateGroup inserts a group.
 func (s *Store) CreateGroup(name, description string) (*Group, error) {
-	if name == "" {
-		return nil, fmt.Errorf("%w: group name is required", ErrInvalid)
+	name, err := validateGroup(name, description)
+	if err != nil {
+		return nil, err
 	}
 	res, err := s.db.Exec(`INSERT INTO groups(name, description, created_at) VALUES (?, ?, ?)`,
 		name, description, s.nowText())

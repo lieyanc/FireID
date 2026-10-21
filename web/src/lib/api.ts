@@ -1,7 +1,17 @@
 import type {
+  AccessRequest,
   AccountSession,
   ApiErrorBody,
+  App,
+  AppCreate,
+  AppDetail,
+  AppMember,
+  AppStatus,
+  AppUpdate,
+  Group,
   Me,
+  MemberRole,
+  MemberStatus,
   Passkey,
   PasskeyCeremony,
   RecoveryCodes,
@@ -117,6 +127,8 @@ const post = <T>(path: string, body?: unknown) =>
 // The backend rejects unknown fields; JSON.stringify drops undefined ones, so
 // optional fields are passed as undefined rather than "".
 
+const appPath = (slug: string) => `/api/admin/apps/${encodeURIComponent(slug)}`
+
 export type PasswordCredentials = {
   username: string
   password: string
@@ -203,5 +215,57 @@ export const api = {
       }),
     changePassword: (currentPassword: string, newPassword: string) =>
       post<void>("/api/account/password", { currentPassword, newPassword }),
+  },
+  admin: {
+    apps: () => get<{ apps: App[] }>("/api/admin/apps"),
+    app: (slug: string) => get<AppDetail>(appPath(slug)),
+    /** clientSecret is "" for public clients; it is never returned again. */
+    createApp: (body: AppCreate) =>
+      post<{ app: App; clientSecret: string }>("/api/admin/apps", body),
+    updateApp: (slug: string, body: AppUpdate) =>
+      request<void>("PATCH", appPath(slug), { body }),
+    deleteApp: (slug: string) => request<void>("DELETE", appPath(slug)),
+    rotateAppSecret: (slug: string) =>
+      post<{ clientSecret: string }>(`${appPath(slug)}/secret/rotate`, {}),
+    setAppStatus: (slug: string, status: AppStatus) =>
+      post<void>(`${appPath(slug)}/status`, { status }),
+    appMembers: (slug: string) =>
+      get<{ members: AppMember[] }>(`${appPath(slug)}/members`),
+    /** Adds the person, or changes the role and status of an existing member. */
+    addAppMember: (
+      slug: string,
+      body: { userId: number; role: MemberRole; status: MemberStatus }
+    ) => post<{ member: AppMember }>(`${appPath(slug)}/members`, body),
+    removeAppMember: (slug: string, userId: number) =>
+      request<void>("DELETE", `${appPath(slug)}/members/${userId}`),
+    /** Replaces the groups whose members may use the app. */
+    setAppGroups: (slug: string, groupIds: number[]) =>
+      post<void>(`${appPath(slug)}/groups`, { groupIds }),
+    accessRequests: (slug: string) =>
+      get<{ requests: AccessRequest[] }>(`${appPath(slug)}/access-requests`),
+    decideAccessRequest: (slug: string, id: number, approve: boolean) =>
+      post<void>(`${appPath(slug)}/access-requests/${id}/decide`, { approve }),
+    groups: () => get<{ groups: Group[] }>("/api/admin/groups"),
+    createGroup: (body: { name: string; description: string }) =>
+      post<{ group: Group }>("/api/admin/groups", body),
+    updateGroup: (id: number, body: { name: string; description: string }) =>
+      request<void>("PATCH", `/api/admin/groups/${id}`, { body }),
+    deleteGroup: (id: number) =>
+      request<void>("DELETE", `/api/admin/groups/${id}`),
+    groupMembers: (id: number) =>
+      get<{ users: User[] }>(`/api/admin/groups/${id}/members`),
+    /** Replaces the group's members. */
+    setGroupMembers: (id: number, userIds: number[]) =>
+      post<void>(`/api/admin/groups/${id}/members`, { userIds }),
+    /**
+     * Super admins get a prefix search; anyone else at most the one account
+     * whose username or email matches exactly.
+     */
+    searchUsers: (q: string, signal?: AbortSignal) =>
+      request<{ users: User[] }>(
+        "GET",
+        `/api/admin/users/search?${new URLSearchParams({ q })}`,
+        { signal }
+      ),
   },
 }

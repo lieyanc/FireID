@@ -34,6 +34,7 @@ export const common = defineMessages({
       email_unavailable: "Email sign-in is not available on this server.",
       invalid_body:
         "The server did not understand the request. Reload the page and try again.",
+      invalid: "Check the values and try again.",
       internal_error:
         "Something went wrong on the server. Try again in a moment.",
       unauthenticated: "Your session has ended. Sign in again.",
@@ -98,6 +99,7 @@ export const common = defineMessages({
       cross_site: "请求来自其他网站，已被拒绝。请直接打开 Fire ID 后重试。",
       email_unavailable: "此服务器未开启邮件登录。",
       invalid_body: "服务器无法识别该请求，请刷新页面后重试。",
+      invalid: "请检查填写的内容后重试。",
       internal_error: "服务器出错了，请稍后重试。",
       unauthenticated: "登录已失效，请重新登录。",
       invalid_token: "初始化令牌无效，请从服务端日志中重新复制。",
@@ -130,6 +132,7 @@ export const shell = defineMessages({
   en: {
     language: "Language",
     notifications: "Notifications",
+    adminNav: "Administration",
     theme: {
       label: "Theme",
       light: "Light",
@@ -153,6 +156,7 @@ export const shell = defineMessages({
   zh: {
     language: "语言",
     notifications: "通知",
+    adminNav: "管理",
     theme: {
       label: "主题",
       light: "浅色",

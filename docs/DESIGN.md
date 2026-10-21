@@ -337,15 +337,21 @@ UI areas:
   revoke.
 - **Apps** (per app, owner or super admin): details, redirect URIs, secret rotation,
   scopes, token auth method, registration policy, access (groups and members),
-  pending access requests, audit trail for that app.
+  pending access requests, audit trail for that app. Built in Stage 5 except
+  editable scopes (every app gets `openid profile email`) and the audit trail (Stage 7).
 - **Admin** (super admin): users (list, search, create, disable, reset credential,
   force logout, delete), groups, all apps (including create and approve), global
   registration policy, SMTP settings, signing keys (rotate, retire, history), audit log,
-  system health, update (OTA).
+  system health, update (OTA). Groups and app creation are built; the rest is not
+  yet.
+- **Self-service** (later stage): an app catalog, requesting access to an app, and
+  invitations. Until then an app's members are added by its managers.
 
 Delegation boundary: an owner sees only their apps and only the users who have a
 relationship with those apps (member, requester, or in a granted group) — plus, when the
-app's policy is `open`, the fact that any active user may sign in.
+app's policy is `open`, the fact that any active user may sign in. To add a member, an
+owner may look up one account by its exact username or email; only the super admin can
+list or search the directory.
 
 ## 9. Build order
 
@@ -356,7 +362,7 @@ app's policy is `open`, the fact that any active user may sign in.
 | 2 | OIDC provider core on the chosen library — discovery, authorize, token, JWKS, userinfo, introspect, revoke, end_session | done; end-to-end tests in `internal/api/oidc_test.go` |
 | 3 | Product layer: setup flow, sessions, password/TOTP/magic link, UI shell, i18n | done; API in [api.md](api.md), tests in `internal/api/signin_test.go` |
 | 4 | Passkeys, account and session management | done; API in [api.md](api.md), tests in `internal/api/passkey_test.go`, `account_test.go` |
-| 5 | Apps, owners, groups, registration policies, access requests | |
+| 5 | Apps, owners, groups, registration policies, access requests | done; API in [api.md](api.md#administration), tests in `internal/api/admin_test.go` |
 | 6 | Forward-auth endpoint and the per-site nginx include | |
 | 7 | Audit log, signing-key rotation, back-channel logout | |
 | 8 | `client/` module: OIDC client with real id_token verification, trusted-header middleware | |

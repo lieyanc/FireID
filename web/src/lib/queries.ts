@@ -24,6 +24,15 @@ export const qk = {
   version: ["version"] as const,
   passkeys: ["account", "passkeys"] as const,
   sessions: ["account", "sessions"] as const,
+  apps: ["admin", "apps"] as const,
+  app: (slug: string) => ["admin", "apps", slug] as const,
+  appMembers: (slug: string) => ["admin", "apps", slug, "members"] as const,
+  appGroups: (slug: string) => ["admin", "apps", slug, "groups"] as const,
+  accessRequests: (slug: string) =>
+    ["admin", "apps", slug, "access-requests"] as const,
+  groups: ["admin", "groups"] as const,
+  group: (id: number) => ["admin", "groups", id] as const,
+  groupMembers: (id: number) => ["admin", "groups", id, "members"] as const,
 }
 
 export const setupQuery = queryOptions({

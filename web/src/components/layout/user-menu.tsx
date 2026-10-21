@@ -1,6 +1,6 @@
-import { useNavigate } from "react-router"
+import { Link, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
-import { LogOutIcon } from "lucide-react"
+import { AppWindowIcon, LogOutIcon, UsersIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -18,7 +18,7 @@ import { useI18n } from "@/i18n"
 import { api } from "@/lib/api"
 import { toastError } from "@/lib/errors"
 import type { User } from "@/lib/types"
-import { useVersion } from "@/lib/queries"
+import { useMe, useVersion } from "@/lib/queries"
 import { signedOut } from "@/lib/session"
 import { displayName, initials } from "@/lib/user"
 
@@ -26,6 +26,7 @@ import { displayName, initials } from "@/lib/user"
 export function UserMenu({ user }: { user: User }) {
   const { t } = useI18n()
   const version = useVersion()
+  const { data: me } = useMe()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
 
@@ -67,6 +68,29 @@ export function UserMenu({ user }: { user: User }) {
             </span>
           </div>
         </DropdownMenuLabel>
+        {(me?.permissions.manageApps || me?.permissions.superAdmin) && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuGroup>
+              {me.permissions.manageApps && (
+                <DropdownMenuItem asChild>
+                  <Link to="/apps">
+                    <AppWindowIcon />
+                    {t("admin.navigation.applications")}
+                  </Link>
+                </DropdownMenuItem>
+              )}
+              {me.permissions.superAdmin && (
+                <DropdownMenuItem asChild>
+                  <Link to="/groups">
+                    <UsersIcon />
+                    {t("admin.navigation.groups")}
+                  </Link>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuGroup>
+          </>
+        )}
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem

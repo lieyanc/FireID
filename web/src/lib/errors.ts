@@ -12,6 +12,7 @@ const KNOWN_CODES = [
   "cross_site",
   "email_unavailable",
   "invalid_body",
+  "invalid",
   "internal_error",
   "unauthenticated",
   "invalid_token",
@@ -45,6 +46,11 @@ export function errorMessage(error: unknown, t: Translate) {
       return error.retryAfter
         ? t("common.errors.rate_limited", { seconds: error.retryAfter })
         : t("common.errors.rateLimitedNoWait")
+    }
+    // Validation failures carry the field at fault only in the server's
+    // (English) message, so it is kept alongside the translated wording.
+    if (error.code === "invalid" && error.message) {
+      return `${t("common.errors.invalid")} (${error.message})`
     }
     if (isKnownCode(error.code)) return t(`common.errors.${error.code}`)
     return error.message

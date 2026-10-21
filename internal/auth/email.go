@@ -301,3 +301,42 @@ func (s *Service) notifySecurityChange(user *store.User, change int) {
 		}
 	}()
 }
+
+// NotifyAccessDecision tells a user that their request to use an app was
+// approved or denied. Like the security notices it is best effort: nothing is
+// sent without SMTP or to an unverified address.
+func (s *Service) NotifyAccessDecision(user *store.User, appName string, approved bool) {
+	if !s.EmailEnabled() || user.Status != store.UserActive {
+		return
+	}
+	// The name is owner-supplied and goes into a header.
+	appName = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, appName)
+	en, zh := "approved", "已通过"
+	if !approved {
+		en, zh = "denied", "未通过"
+	}
+	subject := fmt.Sprintf("Fire ID: your request to use %s was %s", appName, en)
+	body := fmt.Sprintf("Your request to use %s was %s.\n", appName, en)
+	if approved {
+		body += "You can now sign in to it with your Fire ID account.\n"
+	}
+	body += fmt.Sprintf("\n你申请使用 %s 的请求%s。\n", appName, zh)
+	if approved {
+		body += "现在可以用 Fire ID 账号登录它了。\n"
+	}
+	to := user.Email
+	s.mailWG.Add(1)
+	go func() {
+		defer s.mailWG.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := s.mailer.Send(ctx, to, subject, body); err != nil {
+			s.log.Warn("could not send an access decision", "userId", user.ID, "err", err)
+		}
+	}()
+}

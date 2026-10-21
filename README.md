@@ -23,8 +23,9 @@ the OIDC provider core (authorization code with PKCE, refresh-token rotation,
 userinfo, introspection, revocation, RP-initiated logout) and the sign-in product
 (setup, password, TOTP with recovery codes, email code / magic link, an English and
 Chinese web UI) are in place, as are passkeys and self-service account management
-(profile, password change, active sessions). Apps, owners and groups are next. See
-[docs/DESIGN.md](docs/DESIGN.md) for the design and the build order.
+(profile, password change, active sessions), and app administration (apps with
+delegated owners, members, groups, access requests). The forward-auth endpoint is
+next. See [docs/DESIGN.md](docs/DESIGN.md) for the design and the build order.
 
 ## Quick start
 

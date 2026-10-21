@@ -220,8 +220,11 @@ type NewApp struct {
 // CreateApp inserts an app and returns it together with the plaintext client
 // secret, which is shown to the owner exactly once.
 func (s *Store) CreateApp(in NewApp) (*App, string, error) {
-	if in.Slug == "" || in.Name == "" {
-		return nil, "", fmt.Errorf("%w: slug and name are required", ErrInvalid)
+	if err := ValidateSlug(in.Slug); err != nil {
+		return nil, "", err
+	}
+	if in.Name == "" {
+		return nil, "", fmt.Errorf("%w: name is required", ErrInvalid)
 	}
 	if in.ClientType == "" {
 		in.ClientType = ClientConfidential
@@ -243,6 +246,12 @@ func (s *Store) CreateApp(in NewApp) (*App, string, error) {
 	}
 	if in.DefaultAccess == "" {
 		in.DefaultAccess = AccessMembersOnly
+	}
+	if err := validateAppPolicy(in.ClientType, in.TEAuthMethod, in.RegistrationMode, in.DefaultAccess); err != nil {
+		return nil, "", err
+	}
+	if err := validateHomepage(in.HomepageURL); err != nil {
+		return nil, "", err
 	}
 	if len(in.RedirectURIs) == 0 {
 		return nil, "", fmt.Errorf("%w: at least one redirect URI is required", ErrInvalid)

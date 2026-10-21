@@ -181,6 +181,30 @@ func (s *Server) routes() {
 	h("DELETE /api/account/sessions/{id}", s.guardSession(s.accountSessionRevoke))
 	h("PATCH /api/account/profile", s.guard(false, s.accountProfile))
 	h("POST /api/account/password", s.guardSession(s.accountPassword))
+
+	// Administration. Per-app routes check store.CanManageApp in the handler
+	// (via managedApp); group writes and app creation are super-admin only.
+	h("GET /api/admin/apps", s.guard(false, s.adminApps))
+	h("POST /api/admin/apps", s.guard(true, s.adminAppCreate))
+	h("GET /api/admin/apps/{slug}", s.guard(false, s.adminApp))
+	h("PATCH /api/admin/apps/{slug}", s.guard(false, s.adminAppUpdate))
+	h("DELETE /api/admin/apps/{slug}", s.guard(false, s.adminAppDelete))
+	h("POST /api/admin/apps/{slug}/secret/rotate", s.guard(false, s.adminAppRotateSecret))
+	h("POST /api/admin/apps/{slug}/status", s.guard(false, s.adminAppStatus))
+	h("POST /api/admin/apps/{slug}/groups", s.guard(false, s.adminAppGroups))
+	h("GET /api/admin/apps/{slug}/members", s.guard(false, s.adminAppMembers))
+	h("POST /api/admin/apps/{slug}/members", s.guard(false, s.adminAppMemberSet))
+	h("DELETE /api/admin/apps/{slug}/members/{userId}", s.guard(false, s.adminAppMemberRemove))
+	h("GET /api/admin/apps/{slug}/access-requests", s.guard(false, s.adminAppAccessRequests))
+	h("POST /api/admin/apps/{slug}/access-requests/{id}/decide", s.guard(false, s.adminAccessRequestDecide))
+	h("GET /api/admin/groups", s.guard(false, s.adminGroups))
+	h("POST /api/admin/groups", s.guard(true, s.adminGroupCreate))
+	h("PATCH /api/admin/groups/{id}", s.guard(true, s.adminGroupUpdate))
+	h("DELETE /api/admin/groups/{id}", s.guard(true, s.adminGroupDelete))
+	h("GET /api/admin/groups/{id}/members", s.guard(true, s.adminGroupMembers))
+	h("POST /api/admin/groups/{id}/members", s.guard(true, s.adminGroupSetMembers))
+	h("GET /api/admin/users/search", s.guard(false, s.adminUsersSearch))
+
 	// The provider sends the browser here with a pending authorization
 	// request; the form endpoint is the no-JavaScript sign-in for it.
 	h("GET /login", s.oidcLogin)
@@ -579,15 +603,20 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 // permissions summarises what the account may do, so the UI does not have to
 // infer it from roles.
 func (s *Server) permissions(user *store.User) map[string]bool {
-	apps, err := s.deps.Store.AppsOwnedBy(user.ID)
+	owned, err := s.deps.Store.AppsOwnedBy(user.ID)
 	if err != nil {
 		s.deps.Log.Error("could not list owned apps", "userId", user.ID, "err", err)
+	}
+	manages, err := s.managesAnyApp(user)
+	if err != nil {
+		s.deps.Log.Error("could not list managed apps", "userId", user.ID, "err", err)
 	}
 	return map[string]bool{
 		"superAdmin":  user.IsSuperAdmin,
 		"manageUsers": user.IsSuperAdmin,
-		"manageApps":  user.IsSuperAdmin || len(apps) > 0,
-		"ownedApps":   len(apps) > 0,
+		"manageApps":  manages,
+		"ownedApps":   len(owned) > 0,
+		"createApps":  user.IsSuperAdmin,
 	}
 }
 

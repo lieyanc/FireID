@@ -1,9 +1,50 @@
-import { Link } from "react-router"
+import { Link, NavLink } from "react-router"
 
 import { Brand } from "@/components/layout/brand"
 import { Preferences } from "@/components/layout/preferences"
 import { UserMenu } from "@/components/layout/user-menu"
+import { cn } from "@/lib/utils"
+import { useI18n } from "@/i18n"
+import { useMe } from "@/lib/queries"
 import type { User } from "@/lib/types"
+
+/** Admin destinations in the header; hidden when the person has no access. */
+function AppNav() {
+  const { t } = useI18n()
+  const { data: me } = useMe()
+  const items = [
+    {
+      to: "/apps",
+      label: t("admin.navigation.applications"),
+      show: !!me?.permissions.manageApps,
+    },
+    {
+      to: "/groups",
+      label: t("admin.navigation.groups"),
+      show: !!me?.permissions.superAdmin,
+    },
+  ].filter((item) => item.show)
+
+  if (items.length === 0) return null
+  return (
+    <nav aria-label={t("shell.adminNav")} className="flex items-center gap-1">
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          className={({ isActive }) =>
+            cn(
+              "rounded-lg px-2.5 py-1.5 text-sm outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+              isActive ? "font-medium text-foreground" : "text-muted-foreground"
+            )
+          }
+        >
+          {item.label}
+        </NavLink>
+      ))}
+    </nav>
+  )
+}
 
 /** Header and centered content column for signed-in pages. */
 export function AppLayout({
@@ -23,6 +64,9 @@ export function AppLayout({
           >
             <Brand />
           </Link>
+          <div className="ml-4 hidden sm:block">
+            <AppNav />
+          </div>
           <div className="ml-auto flex items-center gap-1">
             <Preferences />
             <UserMenu user={user} />
