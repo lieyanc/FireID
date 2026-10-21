@@ -10,3 +10,4 @@ One fact per file. Format: `- [Title](file.md) — one-line hook`.
 - [Stage 4 pitfalls](stage4-pitfalls.md) — no passkeys on an IP issuer, replay guard uses the stored counter, counter 0 is fine, UV required, in-memory ceremonies, migration test drops indexes
 - [App management](app-management.md) — CanManageApp only, 404 for apps you cannot manage, owner_user_id vs owner role, registrationMode not enforced yet
 - [Stage 6 forward auth](stage6-forward-auth.md) — per-app cookie via one-time code, host entitled by redirect URI, nginx header inheritance trap, real-nginx check without root
+- [Stage 7 back-channel and audit](stage7-backchannel-audit.md) — revoked_at trigger feeds the outbox, sid via userinfo claims, logout+jwt signer, UI must avoid /keys
