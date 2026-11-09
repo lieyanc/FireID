@@ -13,6 +13,7 @@ import { AppSettings } from "@/features/admin/app-settings"
 import { BackchannelLogout } from "@/features/admin/backchannel-logout"
 import { ForwardAuth } from "@/features/admin/forward-auth"
 import { APP_STATUS_LABELS, CLIENT_TYPE_LABELS } from "@/features/admin/labels"
+import { Invites } from "@/features/admin/invites"
 import { MembersList } from "@/features/admin/members-list"
 import { useI18n } from "@/i18n"
 import { api } from "@/lib/api"
@@ -58,7 +59,7 @@ export default function AppDetailPage() {
     <>
       <div className="grid gap-2">
         <Link
-          to="/apps"
+          to="/admin/apps"
           className="flex w-fit items-center gap-1.5 rounded text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <ArrowLeftIcon aria-hidden className="size-4" />
@@ -84,6 +85,7 @@ export default function AppDetailPage() {
       <AppSettings app={app} />
       <BackchannelLogout app={app} pending={backchannelPending ?? 0} />
       <MembersList app={app} members={members} />
+      <Invites app={app} />
       <AppAccess app={app} granted={groups} />
       <ForwardAuth app={app} />
       <AccessRequests app={app} requests={pendingRequests} />

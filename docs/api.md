@@ -118,6 +118,15 @@ the authenticator may sync the passkey and whether it currently is synced.
 | GET | `/api/auth/me` | | `{user, recoveryCodesLeft, amr: [], acr, sessionId, expiresAt, issuer, permissions: {superAdmin, manageUsers, manageApps, ownedApps, createApps}}` or `401 unauthenticated`. See [Permissions](#permissions) |
 | POST | `/api/auth/logout` | `{}` | `204` |
 | GET | `/api/version` | | `{version, commit, buildTime}` |
+| POST | `/api/register` | `{username, email, password, displayName?, invite?, lang?}` | `201 {user, emailVerification: bool}`. `403 forbidden` (self-registration closed and no `invite`), `404 not_found` (`invite` unknown, expired, revoked, used up or for a suspended app), `400 invalid`, `400 weak_password`, `409 conflict` (username or email taken), `429 rate_limited` |
+
+Self-registration needs `auth.registration = open`, or a live app
+[invite](#invites) token in `invite`: the token is checked, not spent (accepting
+the invite spends it). The account starts `pending`. When SMTP is configured
+the address is sent a sign-in code and link at once (`emailVerification: true`);
+redeeming them through `/api/auth/email/verify` activates the account and signs
+it in. Without SMTP the account stays pending until an administrator activates
+it.
 
 ## Password sign-in
 
@@ -221,6 +230,34 @@ other session of the account is revoked, and so is every refresh token issued to
 applications. `currentPassword` is required when the account has a password;
 an account without one sets its first password this way. The username and email
 address are not editable here.
+
+## Catalog
+
+The apps a signed-in person may use, join or ask for. Visibility comes from the
+[access decision](#access-decision) and nothing else.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/api/apps` | | `{apps: [CatalogApp]}`, sorted by name |
+| GET | `/api/apps/:slug` | | `{app: CatalogApp}`. `404 not_found` when the app is not in the caller's catalog |
+| POST | `/api/apps/:slug/join` | `{}` | `204`. Only when `join` is `"join"`; creates an active `member` membership |
+| POST | `/api/apps/:slug/request` | `{message?}` (at most 500 characters) | `201 {id}`. Only when `join` is `"request"`; creates a `pending` membership and an [access request](#access-requests) together. `400 invalid` |
+
+`CatalogApp` is `{slug, name, description, homepageUrl, logoUrl, state, join}`,
+`state` being `allowed` (the person may use it), `pending` (their request
+waits) or `available` (they may join or ask; `join` says which). The catalog
+holds every active app the person may use, every active app whose `join` is
+`"join"` or `"request"`, and apps where their membership is pending. It leaves
+out suspended apps, apps that blocked the person, and `closed` or `invite`
+apps they may not use. The super admin sees every active app as `allowed`.
+
+Join and request answer `404 not_found` for an app outside the catalog (unknown,
+suspended, blocked, `closed`, `invite`), exactly like an unknown slug, and
+`409 conflict` when the app is in the catalog but the action does not apply
+(already allowed, already pending, or the other action). A request emails the
+app's managers — the owning account and active owner and admin members — a
+notice with a link to `/admin/apps/:slug` when SMTP is configured; the message
+is not in the email or the logs.
 
 ## Administration
 
@@ -336,8 +373,42 @@ description at most 500.
 | GET | `/api/admin/apps/:slug/access-requests` | | `{requests: [AccessRequest]}`, pending only, oldest first |
 | POST | `/api/admin/apps/:slug/access-requests/:id/decide` | `{approve: bool}` | `204`. `404 not_found` (also for a request that belongs to another app), `409 conflict` (already decided) |
 
-Approval makes the requester an active `member`. The requester is told the
-outcome by email when SMTP is configured.
+Approval turns the requester's `pending` membership into an active `member`
+one (or creates it, for a request without one); an `active` or `blocked`
+membership is left alone. A pending request is also marked approved when the
+membership is made active another way — by a manager (`decided_by` that manager)
+or an accepted invite (`decided_by` the inviter). Denial removes the `pending` membership, so the
+person may ask again later. The requester is told the outcome by email when
+SMTP is configured. People ask through [`POST /api/apps/:slug/request`](#catalog).
+
+### Invites
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/api/admin/apps/:slug/invites` | | `{invites: [Invite]}`, newest first: every invite still usable and those that ended in the last 30 days |
+| POST | `/api/admin/apps/:slug/invites` | `{email?, role?: "member"\|"admin", expiresInDays?: 1..30, maxUses?: 1..100}` | `201 {invite, url}`. `400 invalid`, `403 forbidden` (`role: "admin"` from someone other than the super admin or the app's owner) |
+| DELETE | `/api/admin/apps/:slug/invites/:id` | | `204`. `404 not_found` (also for another app's invite) |
+| GET | `/api/invites/:token` | | No session needed. `{app: {name, description, logoUrl}, email, expiresAt}`. `404 not_found`, `429 rate_limited` |
+| POST | `/api/invites/:token/accept` | `{}` | Signed in. `{app: {slug, name, homepageUrl}}`. `403 invite_email_mismatch`, `403 blocked`, `403 forbidden` (account not active), `404 not_found`, `429 rate_limited` |
+
+`Invite` is `{id, email, role, createdBy: {id, username, displayName} | null,
+createdAt, expiresAt, maxUses, uses, revokedAt | null}`. Defaults: `role`
+`member`, 7 days, one use. `url` is `<publicUrl>/invite/<token>`; the token (32
+random bytes, base64url) appears in this response only — the server keeps its
+SHA-256 — and is redacted from request logs. With `email` set the invite is
+bound to that address and, when SMTP is configured, the link is also mailed to
+it.
+
+An unknown, expired, revoked or used-up token, or one for a suspended app, is
+the same `404`; misses count against the source address. Accepting makes the
+account an active member with the invite's role, or keeps a higher role it
+already has (an owner stays owner); a `pending` membership becomes active. A
+`blocked` membership stays blocked (`403 blocked`), and an address-bound invite
+needs an account with that address (`403 invite_email_mismatch`, compared
+case-insensitively; an active account's address is verified). Neither refusal
+spends a use. The use is counted in the same update that checks `uses <
+maxUses`, so the last use cannot be taken twice. Invites work in every
+registration mode.
 
 ### User search
 
@@ -364,20 +435,34 @@ effect without waiting for tokens to expire. The first rule that matches wins:
 | 2 | the account is the super admin | allow |
 | 3 | a `blocked` membership | refuse (`blocked`) |
 | 4 | a `pending` membership | refuse (`pending_approval`) |
-| 5 | an `active` membership | allow |
+| 5 | an `active` membership with role `owner` or `admin`, or any `active` membership when `defaultAccess` is not `groups` | allow |
 | 6 | a member of a group granted to the app | allow |
 | 7 | `defaultAccess` is `all_users` | allow |
-| | otherwise | refuse (`not_permitted`) |
+| 8 | otherwise | refuse (`not_permitted`), with `join` |
 
-`defaultAccess` is `all_users`, `groups` or `members_only`. Members and granted
-groups are let in whatever it says, so only `all_users` changes the outcome
-(rule 7); `groups` and `members_only` currently decide the same way and record
-the intent. `registrationMode` — `closed`, `invite`,
-`open`, `admin_approval` — says how new people are meant to join the app. It is
-stored and editable, but the self-service request and invite flow and the app
-catalog are a later stage: today a person gets into an `admin_approval` (or any
-other) app only when a manager adds them as a member, puts them in a granted
-group, or the app's default access lets them in.
+`defaultAccess` is `all_users`, `groups` or `members_only`. Under
+`members_only` an active membership lets a person in; under `groups` the app is
+meant to be reached through granted groups, so a plain `member` membership
+grants nothing and only owners and admins get in by membership (rule 5);
+`all_users` lets in every active account (rule 7).
+
+`registrationMode` — `closed`, `invite`, `open`, `admin_approval` — says how a
+person who is refused under rule 8 can get in, and the decision reports it as
+`join`: `"join"` for `open` (anyone may [join](#catalog) as a member),
+`"request"` for `admin_approval` (anyone may ask; a manager decides), and `""`
+for `closed` and `invite` (a manager adds the person, or sends an
+[invite](#invites)). Under `groups` `join` is always `""`, and an app with
+`defaultAccess: "groups"` must use `closed` or `invite` (`400 invalid`
+otherwise). `all_users` with `open` or `admin_approval` is allowed but has no
+effect, since everyone is already let in.
+
+When an OIDC sign-in is refused with a non-empty `join` (and the request is not
+`prompt=none`), the browser is not sent back to the client with
+`access_denied`: it goes to `/denied?app=<slug>&reason=not_permitted&auth_req_id=<id>`
+and the authorization request stays pending, so after joining the UI can resume
+it at `/login?auth_req_id=<id>` (which asks `CanUseApp` again). The JSON
+sign-in responses then carry `redirectTo` (that URL), `denied`, `deniedApp`
+(the slug) and `join`. Every other refusal goes back to the client as before.
 
 ### Audit log
 
@@ -423,6 +508,12 @@ secret: no password, code, token or attempted username.
 | `auth.sign_out` | info | the person signed out; detail `{via: "rp_logout"}` and the app when an app's `/end_session` did it |
 | `account.password_change`, `account.totp_enable`, `account.totp_disable`, `account.recovery_codes`, `account.passkey_add`, `account.passkey_remove`, `account.update`, `account.session_revoke`, `account.sessions_revoke_others` | info | the account holder changed their own account |
 | `app.create`, `app.update`, `app.secret_rotate`, `app.status`, `app.groups_set`, `app.member_set`, `app.member_remove`, `app.access_decision` | info | an app was administered; `app.update` lists the changed field names |
+| `app.invite_create` | info | a manager created an invite; detail `{inviteId, role, maxUses}` (never the token) |
+| `app.invite_revoke` | info | a manager revoked an invite; detail `{inviteId}` |
+| `app.self_join` | info | a person joined an `open` app from the catalog |
+| `app.access_request` | info | a person asked to use an `admin_approval` app; detail `{requestId}` |
+| `app.invite_accept` | info | a person accepted an invite; detail `{inviteId, role}` |
+| `account.register` | info | an account was self-registered; detail `{invited}` |
 | `app.delete` | warning | an app was deleted; the row has no app, detail `{appId, slug, name}` names it |
 | `group.create`, `group.update`, `group.delete`, `group.members_set` | info | a group was administered |
 | `key.rotate`, `key.retire` | warning | a signing key was rotated or retired; detail `{kid}` |
@@ -491,7 +582,7 @@ client.
 |---|---|---|---|
 | GET | `/api/authz/forward` | nginx subrequest | `204` with `X-FireID-User`, `X-FireID-Email`, `X-FireID-Name`, `X-FireID-Groups` (comma-separated group names), `X-FireID-Sub` (account ID). `401` with `Location: <site>/__fireid/start?rd=<url>` without a valid site session. `403` with `X-FireID-Denied: <reason>` when [refused](#access-decision); `403` (logged) when `X-FireID-App` is missing or unknown |
 | GET | `/api/authz/app/start?rd=` | browser, as `/__fireid/start` | `302` to `/api/authz/authorize` on the IdP, setting the state cookie (`__Host-fireid_state` on HTTPS, 10 minutes). `400` for an unregistered host |
-| GET | `/api/authz/authorize?app=&state=&rd=` | browser, on the IdP host | `302` to `/sign-in?return=…` without an IdP session, to `/denied?app=<name>&reason=<reason>` when refused, otherwise to `<site>/__fireid/callback?code=`. `400` for an unknown app, a missing `state` or an unregistered host |
+| GET | `/api/authz/authorize?app=&state=&rd=` | browser, on the IdP host | `302` to `/sign-in?return=…` without an IdP session, to `/denied?app=<slug>&reason=<reason>` when refused, otherwise to `<site>/__fireid/callback?code=`. `400` for an unknown app, a missing `state` or an unregistered host |
 | GET | `/api/authz/app/callback?code=` | browser, as `/__fireid/callback` | `302` to `rd`, setting the site cookie `__Host-fireid_app` (`fireid_app` on plain HTTP). `400` for an unknown, expired or used code, another origin's code, or a missing or wrong state cookie |
 | GET | `/api/authz/app/logout?rd=` | browser, as `/__fireid/logout` | `302` to `rd`; ends the site session only |
 | GET | `/api/admin/apps/:slug/forward-auth` | UI | `{callbackPath, hosts, serverSnippet, locationSnippet}`. Managers of the app; `404 not_found` otherwise |
@@ -523,7 +614,8 @@ Served by the backend, not the UI:
 - `POST /oidc/login` — form-encoded sign-in for browsers without JavaScript.
 
 UI routes: `/` (account home), `/sign-in`, `/setup`, `/email-login`, `/denied`,
-and for administration `/apps`, `/apps/new`, `/apps/:slug`, `/groups`, `/audit`,
+`/register`, `/invite/:token`, `/apps` (the catalog), and for administration
+`/admin/apps`, `/admin/apps/new`, `/admin/apps/:slug`, `/groups`, `/audit`,
 `/signing-keys` (each page
 checks `permissions` and sends the person home when they may not be there).
 
@@ -531,6 +623,12 @@ checks `permissions` and sends the person home when they may not be there).
   values starting with `/api/authz/authorize?` are honoured (forward auth sends
   people here); anything else is ignored, so the parameter cannot send anyone to
   another site.
-- `/denied?app=<name>&reason=<reason>` — where forward auth sends a signed-in
+- `/denied?app=<slug>&reason=<reason>[&auth_req_id=<id>]` — where forward auth,
+  and an OIDC sign-in that the person could fix by joining, send a signed-in
   person the app refuses. `reason` is one from the [access decision](#access-decision);
-  anything else reads as `not_permitted`.
+  anything else reads as `not_permitted`. The page treats every parameter as
+  untrusted: it shows the app only through `GET /api/apps/:slug`, acts only
+  through the join and request endpoints (which decide again), and resumes an
+  OIDC sign-in only by navigating to `/login?auth_req_id=…`.
+- `/apps` — the [catalog](#catalog); `/invite/:token` — the invite page;
+  `/register` — self-registration.

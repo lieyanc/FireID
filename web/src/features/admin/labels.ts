@@ -46,6 +46,20 @@ export const REGISTRATION_MODE_LABELS: Record<RegistrationMode, MessageKey> = {
   admin_approval: "admin.apps.registrationMode.adminApproval",
 }
 
+/** One line on what each registration mode does, shown under the select. */
+export const REGISTRATION_MODE_HINTS: Record<RegistrationMode, MessageKey> = {
+  closed: "admin.apps.registrationMode.explain.closed",
+  invite: "admin.apps.registrationMode.explain.invite",
+  open: "admin.apps.registrationMode.explain.open",
+  admin_approval: "admin.apps.registrationMode.explain.adminApproval",
+}
+
+/**
+ * Registration modes that make someone a plain member. Under defaultAccess
+ * "groups" a member gets nothing, so store.validateAppPolicy refuses them.
+ */
+export const SELF_JOIN_MODES: RegistrationMode[] = ["open", "admin_approval"]
+
 export const DEFAULT_ACCESS_LABELS: Record<DefaultAccess, MessageKey> = {
   members_only: "admin.apps.defaultAccess.membersOnly",
   groups: "admin.apps.defaultAccess.groups",
@@ -103,6 +117,11 @@ export const AUDIT_EVENT_LABELS = {
   "app.member_set": "admin.audit.events.app.member_set",
   "app.member_remove": "admin.audit.events.app.member_remove",
   "app.access_decision": "admin.audit.events.app.access_decision",
+  "app.self_join": "admin.audit.events.app.self_join",
+  "app.access_request": "admin.audit.events.app.access_request",
+  "app.invite_create": "admin.audit.events.app.invite_create",
+  "app.invite_revoke": "admin.audit.events.app.invite_revoke",
+  "app.invite_accept": "admin.audit.events.app.invite_accept",
   "group.create": "admin.audit.events.group.create",
   "group.update": "admin.audit.events.group.update",
   "group.delete": "admin.audit.events.group.delete",

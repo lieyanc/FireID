@@ -132,7 +132,7 @@ export const shell = defineMessages({
   en: {
     language: "Language",
     notifications: "Notifications",
-    adminNav: "Administration",
+    mainNav: "Main navigation",
     theme: {
       label: "Theme",
       light: "Light",
@@ -156,7 +156,7 @@ export const shell = defineMessages({
   zh: {
     language: "语言",
     notifications: "通知",
-    adminNav: "管理",
+    mainNav: "主导航",
     theme: {
       label: "主题",
       light: "浅色",

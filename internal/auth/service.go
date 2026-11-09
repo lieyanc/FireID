@@ -360,8 +360,10 @@ type RegisterResult struct {
 // Register creates a self-registered account. Every new account starts pending
 // until its address is verified, unless email is not configured at all, in
 // which case the operator has accepted that addresses are unverified.
-func (s *Service) Register(username, email, displayName, password, ip string) (*RegisterResult, error) {
-	if s.cfg.Registration != "open" {
+// invited is true when the caller has checked a live app invite, which lets a
+// person register while self-registration is closed.
+func (s *Service) Register(username, email, displayName, password, ip string, invited bool) (*RegisterResult, error) {
+	if s.cfg.Registration != "open" && !invited {
 		return nil, fmt.Errorf("%w: self-registration is disabled", ErrForbidden)
 	}
 	if err := s.checkPassword(password); err != nil {

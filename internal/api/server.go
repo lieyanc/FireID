@@ -59,6 +59,8 @@ type Server struct {
 	// proxyWarning fires once when forwarded headers arrive but are not
 	// trusted, which usually means server.trustProxyHeaders is missing.
 	proxyWarning sync.Once
+	// inviteThrottle counts unknown invite tokens per source address.
+	inviteThrottle *auth.Throttle
 }
 
 // New builds the server and its routes.
@@ -69,7 +71,8 @@ func New(deps Deps) (*Server, error) {
 	if deps.Log == nil {
 		deps.Log = slog.Default()
 	}
-	s := &Server{deps: deps, mux: http.NewServeMux()}
+	s := &Server{deps: deps, mux: http.NewServeMux(),
+		inviteThrottle: auth.NewThrottle(auth.ThrottleOptions{Free: 10})}
 
 	oidcProv, err := oidc.NewProvider(deps.Store, deps.SecretBox, deps.Auth, deps.Config, deps.Log)
 	if err != nil {
@@ -109,7 +112,7 @@ func withBodyLimit(next http.Handler) http.Handler {
 func (s *Server) withCrossSite(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !oidc.Handles(r.URL.Path) && s.crossSite(r) {
-			s.deps.Log.Warn("rejected cross-site request", "method", r.Method, "path", r.URL.Path,
+			s.deps.Log.Warn("rejected cross-site request", "method", r.Method, "path", redactPath(r.URL.Path),
 				"origin", r.Header.Get("Origin"), "secFetchSite", r.Header.Get("Sec-Fetch-Site"),
 				"ip", s.clientIP(r))
 			fail(w, http.StatusForbidden, "cross_site", "cross-site requests are not accepted")
@@ -196,6 +199,16 @@ func (s *Server) routes() {
 	h("PATCH /api/account/profile", s.guard(false, s.accountProfile))
 	h("POST /api/account/password", s.guardSession(s.accountPassword))
 
+	// Self-service: the app catalog, joining and requests, invitations and
+	// registration. The catalog decides visibility through store.CanUseApp.
+	h("POST /api/register", s.register)
+	h("GET /api/apps", s.guard(false, s.catalogApps))
+	h("GET /api/apps/{slug}", s.guard(false, s.catalogApp))
+	h("POST /api/apps/{slug}/join", s.guard(false, s.appJoin))
+	h("POST /api/apps/{slug}/request", s.guard(false, s.appRequest))
+	h("GET /api/invites/{token}", s.invitePreview)
+	h("POST /api/invites/{token}/accept", s.guard(false, s.inviteAccept))
+
 	// Administration. Per-app routes check store.CanManageApp in the handler
 	// (via managedApp); group writes and app creation are super-admin only.
 	h("GET /api/admin/apps", s.guard(false, s.adminApps))
@@ -211,6 +224,9 @@ func (s *Server) routes() {
 	h("DELETE /api/admin/apps/{slug}/members/{userId}", s.guard(false, s.adminAppMemberRemove))
 	h("GET /api/admin/apps/{slug}/access-requests", s.guard(false, s.adminAppAccessRequests))
 	h("POST /api/admin/apps/{slug}/access-requests/{id}/decide", s.guard(false, s.adminAccessRequestDecide))
+	h("GET /api/admin/apps/{slug}/invites", s.guard(false, s.adminInvites))
+	h("POST /api/admin/apps/{slug}/invites", s.guard(false, s.adminInviteCreate))
+	h("DELETE /api/admin/apps/{slug}/invites/{id}", s.guard(false, s.adminInviteRevoke))
 	h("GET /api/admin/groups", s.guard(false, s.adminGroups))
 	h("POST /api/admin/groups", s.guard(true, s.adminGroupCreate))
 	h("PATCH /api/admin/groups/{id}", s.guard(true, s.adminGroupUpdate))
@@ -256,7 +272,7 @@ func (s *Server) withRecover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if p := recover(); p != nil {
-				s.deps.Log.Error("panic in handler", "path", r.URL.Path, "panic", fmt.Sprint(p))
+				s.deps.Log.Error("panic in handler", "path", redactPath(r.URL.Path), "panic", fmt.Sprint(p))
 				fail(w, http.StatusInternalServerError, "internal_error", "something went wrong")
 			}
 		}()
@@ -307,7 +323,7 @@ func (s *Server) withLogging(next http.Handler) http.Handler {
 			level = slog.LevelInfo
 		}
 		s.deps.Log.Log(r.Context(), level, "http",
-			"method", r.Method, "path", r.URL.Path, "status", rec.status,
+			"method", r.Method, "path", redactPath(r.URL.Path), "status", rec.status,
 			"ip", s.clientIP(r), "duration", time.Since(start).Round(time.Millisecond).String())
 	})
 }
@@ -614,6 +630,9 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, res *auth.L
 			resp["redirectTo"] = d.Redirect
 			if d.Denied != "" {
 				resp["denied"] = d.Denied
+			}
+			if d.Join != "" {
+				resp["deniedApp"], resp["join"] = d.App, d.Join
 			}
 		}
 	}

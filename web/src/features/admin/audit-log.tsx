@@ -213,7 +213,7 @@ function AuditRow({ entry, showApp }: { entry: AuditEntry; showApp: boolean }) {
       label: t("admin.audit.field.app"),
       value: (
         <Link
-          to={`/apps/${encodeURIComponent(entry.app.slug)}`}
+          to={`/admin/apps/${encodeURIComponent(entry.app.slug)}`}
           className="rounded underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {entry.app.name}

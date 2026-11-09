@@ -222,7 +222,7 @@ func (h *Handler) Authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if !access.Allowed {
 		h.Log.Info("forward auth refused", "app", app.Slug, "userId", user.ID, "reason", access.Reason)
-		http.Redirect(w, r, "/denied?"+url.Values{"app": {app.Name}, "reason": {access.Reason}}.Encode(),
+		http.Redirect(w, r, "/denied?"+url.Values{"app": {app.Slug}, "reason": {access.Reason}}.Encode(),
 			http.StatusFound)
 		return
 	}

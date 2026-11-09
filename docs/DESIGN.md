@@ -131,9 +131,13 @@ app_grants(app_id FK, grant_type, PRIMARY KEY(app_id, grant_type))
 app_registration_policy(app_id PK, mode, default_access)
 ```
 - `mode`: `closed` | `invite` | `open` | `admin_approval`.
-  `open` accepts any active user of this deployment; `admin_approval` holds the user in
-  the app's pending list until the owner approves.
-- `default_access`: `all_users` | `groups` | `members_only`.
+  `open` lets any active user join from the catalog as a member; `admin_approval` lets
+  them ask, holding a pending membership until a manager decides; `closed` and `invite`
+  offer nothing (a manager adds people, or sends an invite). Invites work in every mode.
+- `default_access`: `all_users` | `groups` | `members_only`. Under `groups` only owner
+  and admin memberships grant access by themselves — the app is reached through granted
+  groups — so it requires mode `closed` or `invite`.
+- Both are stored as columns of `apps` (`registration_mode`, `default_access`).
 
 ```sql
 groups(id, name UNIQUE, description, created_at)
@@ -145,8 +149,19 @@ access_requests(id, app_id FK, user_id FK, message, status, created_at, decided_
                 decided_by FK)
 ```
 - `app_memberships.role`: `owner` | `admin` | `member`. `status`: `active` | `pending` | `blocked`.
-- Effective access to an app = owner/admin, or an active membership, or a group granted
-  to the app, or (when `default_access = all_users`) any active user.
+- Effective access to an app = an active owner/admin membership, or an active membership
+  when `default_access` is not `groups`, or a group granted to the app, or (when
+  `default_access = all_users`) any active user. A blocked or pending membership refuses
+  first. `store.CanUseApp` decides, and also reports what a refused person may do
+  (join, request, nothing) from the mode.
+
+```sql
+app_invites(id, app_id FK, token_hash UNIQUE, email, role, created_by FK, created_at,
+            expires_at, max_uses, uses, revoked_at)
+```
+- One row per invite link; only the SHA-256 of the token is stored. `role` is `member` or
+  `admin`; `email`, when set, binds it to that address. Each acceptance increments `uses`
+  in the same statement that checks `uses < max_uses`. Schema v7.
 
 ### Sessions and tokens
 
@@ -397,8 +412,12 @@ UI areas:
   registration policy, SMTP settings, signing keys (rotate, retire, history), audit log,
   system health, update (OTA). Groups, app creation, signing keys and the audit log
   are built; the rest is not yet.
-- **Self-service** (later stage): an app catalog, requesting access to an app, and
-  invitations. Until then an app's members are added by its managers.
+- **Self-service** (any signed-in user): an app catalog (`/apps`) of the apps the
+  person may use, join or ask for; joining an `open` app; requesting an
+  `admin_approval` one (its managers are emailed and decide in the app's page); the
+  denied page offers the same when a sign-in is refused. Managers create invite links
+  (optionally bound to an address, multi-use, expiring), which also let a person
+  register while self-registration is closed.
 
 Delegation boundary: an owner sees only their apps and only the users who have a
 relationship with those apps (member, requester, or in a granted group) — plus, when the

@@ -75,7 +75,7 @@ function AdminCard() {
       </CardHeader>
       <CardFooter>
         <Button variant="outline" asChild>
-          <Link to="/apps">
+          <Link to="/admin/apps">
             {t("admin.navigation.manage")}
             <ArrowRightIcon data-icon="inline-end" />
           </Link>

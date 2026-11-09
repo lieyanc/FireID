@@ -15,7 +15,17 @@ type Access struct {
 	Reason string
 	// Role is the user's role in the app when they are a member.
 	Role string
+	// Join is what a refused person can do about it: JoinSelf when the app
+	// lets anyone join, JoinRequest when it takes requests, "" otherwise. It
+	// is set only for ReasonNotPermitted.
+	Join string
 }
+
+// Join values.
+const (
+	JoinSelf    = "join"
+	JoinRequest = "request"
+)
 
 // Reasons an access decision can carry.
 const (
@@ -39,9 +49,13 @@ const (
 //  2. The super admin may use every active app.
 //  3. A blocked membership refuses.
 //  4. A pending membership refuses with a reason the UI can act on.
-//  5. An active membership allows, with its role.
+//  5. An active membership allows, with its role — except that under default
+//     access groups a plain member membership grants nothing (the app is
+//     reached through groups) and only owner and admin memberships allow.
 //  6. A granted group allows.
-//  7. Otherwise, an app whose default access is all_users allows any active user.
+//  7. An app whose default access is all_users allows any active user.
+//  8. Otherwise the answer is not_permitted, with Join saying whether the
+//     app's registration mode lets the person join or ask.
 func (s *Store) CanUseApp(app *App, user *User) (*Access, error) {
 	if app.Status != AppActive {
 		return &Access{Allowed: false, Reason: ReasonSuspended}, nil
@@ -62,9 +76,13 @@ func (s *Store) CanUseApp(app *App, user *User) (*Access, error) {
 		case MemberPending:
 			return &Access{Allowed: false, Reason: ReasonPending}, nil
 		case MemberActive:
-			return &Access{Allowed: true, Reason: ReasonMember, Role: m.Role}, nil
+			if m.Role == RoleOwner || m.Role == RoleAdmin || app.DefaultAccess != AccessGroups {
+				return &Access{Allowed: true, Reason: ReasonMember, Role: m.Role}, nil
+			}
+			// A plain member of a groups app: fall through to the groups.
+		default:
+			return &Access{Allowed: false, Reason: ReasonNotPermitted}, nil
 		}
-		return &Access{Allowed: false, Reason: ReasonNotPermitted}, nil
 	case errors.Is(err, ErrNotFound):
 		// Fall through to the group and default checks.
 	default:
@@ -82,7 +100,22 @@ func (s *Store) CanUseApp(app *App, user *User) (*Access, error) {
 	if app.DefaultAccess == AccessAllUsers {
 		return &Access{Allowed: true, Reason: ReasonAllUsers}, nil
 	}
-	return &Access{Allowed: false, Reason: ReasonNotPermitted}, nil
+	return &Access{Allowed: false, Reason: ReasonNotPermitted, Join: joinOption(app)}, nil
+}
+
+// joinOption is what the app's registration mode offers someone who may not
+// use it yet. Under groups, joining as a member would grant nothing.
+func joinOption(app *App) string {
+	if app.DefaultAccess == AccessGroups {
+		return ""
+	}
+	switch app.RegistrationMode {
+	case RegOpen:
+		return JoinSelf
+	case RegAdminApproval:
+		return JoinRequest
+	}
+	return ""
 }
 
 // UserInAppGroups reports whether any group granted to the app contains the user.
@@ -99,15 +132,34 @@ func (s *Store) UserInAppGroups(appID, userID int64) (bool, error) {
 }
 
 // SetMembership creates or updates a user's relationship with an app.
+// Making it active also approves a pending access request, in the same
+// transaction, so the request does not linger in the managers' list.
 func (s *Store) SetMembership(appID, userID int64, role, status string, approvedBy int64) error {
-	now := s.nowText()
-	_, err := s.db.Exec(`INSERT INTO app_memberships(app_id, user_id, role, status, created_at, approved_by)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(app_id, user_id) DO UPDATE SET role = excluded.role, status = excluded.status,
-			approved_by = excluded.approved_by`,
-		appID, userID, role, status, now, nullInt(approvedBy))
-	if err != nil {
-		return fmt.Errorf("set membership: %w", err)
+	return s.inTx(func(tx *sql.Tx) error {
+		now := s.nowText()
+		_, err := tx.Exec(`INSERT INTO app_memberships(app_id, user_id, role, status, created_at, approved_by)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(app_id, user_id) DO UPDATE SET role = excluded.role, status = excluded.status,
+				approved_by = excluded.approved_by`,
+			appID, userID, role, status, now, nullInt(approvedBy))
+		if err != nil {
+			return fmt.Errorf("set membership: %w", err)
+		}
+		if status == MemberActive {
+			return closePendingRequest(tx, appID, userID, approvedBy, now)
+		}
+		return nil
+	})
+}
+
+// closePendingRequest marks a user's pending access request for an app as
+// approved once their membership has been made active some other way (a
+// manager, an invite). decidedBy may be 0, stored as NULL.
+func closePendingRequest(tx *sql.Tx, appID, userID, decidedBy int64, now string) error {
+	if _, err := tx.Exec(`UPDATE access_requests SET status = 'approved', decided_at = ?, decided_by = ?
+		WHERE app_id = ? AND user_id = ? AND status = 'pending'`,
+		now, nullInt(decidedBy), appID, userID); err != nil {
+		return fmt.Errorf("close pending request: %w", err)
 	}
 	return nil
 }

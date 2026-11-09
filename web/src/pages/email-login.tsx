@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { FieldGroup } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
-import { useSignInFlow } from "@/features/sign-in/flow"
+import { takeRememberedReturn, useSignInFlow } from "@/features/sign-in/flow"
 import { SharedStep, StepCard } from "@/features/sign-in/steps"
 import { useI18n } from "@/i18n"
 import { api } from "@/lib/api"
@@ -26,7 +26,12 @@ function readFragment(): MagicLink | null {
 export default function EmailLoginPage() {
   const { t } = useI18n()
   const [link] = React.useState(readFragment)
-  const flow = useSignInFlow()
+  // An authorization request in the link wins over a remembered page.
+  const [returnTo] = React.useState(() => {
+    const remembered = takeRememberedReturn()
+    return link?.authReqId ? undefined : remembered
+  })
+  const flow = useSignInFlow({ returnTo })
   const [busy, setBusy] = React.useState(false)
   const [formError, setFormError] = React.useState<string | null>(null)
 
@@ -44,7 +49,9 @@ export default function EmailLoginPage() {
         to={
           link?.authReqId
             ? `/sign-in?auth_req_id=${encodeURIComponent(link.authReqId)}`
-            : "/sign-in"
+            : returnTo
+              ? `/sign-in?${new URLSearchParams({ return: returnTo })}`
+              : "/sign-in"
         }
       >
         {t("auth.emailLink.toSignIn")}

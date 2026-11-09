@@ -1,6 +1,6 @@
 ---
 name: app-management
-description: Who may manage an app, the 404-not-403 rule, and what registrationMode does not do yet
+description: Who may manage an app, the 404-not-403 rule, owner_user_id vs owner role
 metadata:
   type: project
 ---
@@ -9,7 +9,7 @@ metadata:
 - An app the caller cannot manage answers **404**, exactly like an unknown slug, so slugs cannot be probed.
 - Deleting an app and the protected membership row follow `owner_user_id`, not the owner *role*.
 - Owners see the user directory only by exact username/email (`UserByLogin`); prefix search is super-admin only (DESIGN §8 delegation boundary).
-- As of Stage 6 `registrationMode` is stored but not enforced (no self-service catalog, requests or invites yet), and `defaultAccess` `groups` and `members_only` decide the same way.
+- `registrationMode` and the `groups`/`members_only` difference are enforced since 2026-11-09; see [registration-modes](registration-modes.md).
 
 **Why:** settled in Stage 5 (2026-10-21, a1eef8a).
 

@@ -10,8 +10,12 @@ import type {
   AppUpdate,
   AuditFilter,
   AuditPage,
+  CatalogApp,
   ForwardAuthSetup,
   Group,
+  Invite,
+  InviteCreate,
+  InvitePreview,
   Me,
   MemberRole,
   MemberStatus,
@@ -132,6 +136,9 @@ const post = <T>(path: string, body?: unknown) =>
 // optional fields are passed as undefined rather than "".
 
 const appPath = (slug: string) => `/api/admin/apps/${encodeURIComponent(slug)}`
+const catalogPath = (slug: string) => `/api/apps/${encodeURIComponent(slug)}`
+const invitePath = (token: string) =>
+  `/api/invites/${encodeURIComponent(token)}`
 
 /** Query string of an audit log page; empty filters are left out. */
 function auditQuery(filter: AuditFilter, before?: number, limit?: number) {
@@ -167,6 +174,15 @@ export const api = {
       password: string
     }) => post<{ user: User }>("/api/setup", body),
   },
+  /** Creates a pending account; an invite allows it while registration is closed. */
+  register: (body: {
+    username: string
+    email: string
+    password: string
+    displayName?: string
+    invite?: string
+    lang?: "en" | "zh"
+  }) => post<{ user: User; emailVerification: boolean }>("/api/register", body),
   auth: {
     me: () => get<Me>("/api/auth/me"),
     logout: () => post<void>("/api/auth/logout"),
@@ -234,6 +250,23 @@ export const api = {
     changePassword: (currentPassword: string, newPassword: string) =>
       post<void>("/api/account/password", { currentPassword, newPassword }),
   },
+  /** Apps the signed-in person may use, join or ask for. */
+  catalog: {
+    apps: () => get<{ apps: CatalogApp[] }>("/api/apps"),
+    /** 404 for any app outside the person's catalog. */
+    app: (slug: string) => get<{ app: CatalogApp }>(catalogPath(slug)),
+    join: (slug: string) => post<void>(`${catalogPath(slug)}/join`),
+    request: (slug: string, message?: string) =>
+      post<{ id: number }>(`${catalogPath(slug)}/request`, { message }),
+  },
+  invites: {
+    /** Works without a session; 404 for any link that cannot be used. */
+    preview: (token: string) => get<InvitePreview>(invitePath(token)),
+    accept: (token: string) =>
+      post<{ app: { slug: string; name: string; homepageUrl: string } }>(
+        `${invitePath(token)}/accept`
+      ),
+  },
   admin: {
     apps: () => get<{ apps: App[] }>("/api/admin/apps"),
     app: (slug: string) => get<AppDetail>(appPath(slug)),
@@ -263,6 +296,13 @@ export const api = {
       get<{ requests: AccessRequest[] }>(`${appPath(slug)}/access-requests`),
     decideAccessRequest: (slug: string, id: number, approve: boolean) =>
       post<void>(`${appPath(slug)}/access-requests/${id}/decide`, { approve }),
+    invites: (slug: string) =>
+      get<{ invites: Invite[] }>(`${appPath(slug)}/invites`),
+    /** The URL carries the token and is never returned again. */
+    createInvite: (slug: string, body: InviteCreate) =>
+      post<{ invite: Invite; url: string }>(`${appPath(slug)}/invites`, body),
+    revokeInvite: (slug: string, id: number) =>
+      request<void>("DELETE", `${appPath(slug)}/invites/${id}`),
     forwardAuth: (slug: string) =>
       get<ForwardAuthSetup>(`${appPath(slug)}/forward-auth`),
     /** The events of one app, newest first. */

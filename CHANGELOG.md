@@ -8,6 +8,37 @@ under **Changed** with what to do.
 
 ## [Unreleased]
 
+### Added
+
+- **App catalog** (`/apps`, `GET /api/apps`, `GET /api/apps/:slug`): every signed-in
+  person sees the apps they may use, join or ask for, and the requests still waiting.
+- **Registration modes take effect.** `open` apps can be joined from the catalog
+  (`POST /api/apps/:slug/join`); `admin_approval` apps take requests
+  (`POST /api/apps/:slug/request`), which email the app's managers when SMTP is
+  configured. A sign-in the person could fix this way lands on the denied page with
+  the matching button instead of bouncing back to the app.
+- **Invites.** App managers create invite links (optionally bound to one address,
+  1–30 days, 1–100 uses, `member` or — for owners and the super admin — `admin`),
+  list and revoke them; people preview and accept them at `/invite/:token`. Only
+  a hash of the token is stored, and it is redacted from request logs. Schema v7
+  adds the `app_invites` table; it is created on start.
+- **Self-registration endpoint** `POST /api/register`. It works when
+  `auth.registration` is `open`, or with a live invite token while it is closed.
+- Audit events `app.self_join`, `app.access_request`, `app.invite_create`,
+  `app.invite_revoke`, `app.invite_accept` and `account.register`.
+
+### Changed
+
+- **`defaultAccess: "groups"` now differs from `members_only`.** A plain `member`
+  membership no longer lets a person into a `groups` app; only owner and admin
+  memberships and granted groups do. Such apps must use registration mode `closed` or
+  `invite` (`400 invalid` otherwise). If you set up a `groups` app with members who
+  are not in a granted group, add them to a group or switch the app to
+  `members_only`.
+- Denying an access request now removes the requester's pending membership, so they
+  can ask again; approving no longer lifts a block set while the request waited.
+- Forward auth's `/denied` redirect carries the app's slug in `app`, not its name.
+
 ## [0.1.0] - Unreleased
 
 The first release.

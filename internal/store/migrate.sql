@@ -207,6 +207,27 @@ CREATE TABLE IF NOT EXISTS access_requests (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_access_requests_pending
     ON access_requests(app_id, user_id) WHERE status = 'pending';
 
+-- An invitation to one app. Only the SHA-256 of the token is kept; the link
+-- is shown to the manager once. An invite may be used max_uses times and may
+-- be bound to one address.
+CREATE TABLE IF NOT EXISTS app_invites (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    token_hash TEXT    NOT NULL UNIQUE,
+    -- Lowercased address the invite is for; empty means anyone with the link.
+    email      TEXT    NOT NULL DEFAULT '',
+    -- member | admin
+    role       TEXT    NOT NULL DEFAULT 'member',
+    created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT    NOT NULL,
+    expires_at TEXT    NOT NULL,
+    max_uses   INTEGER NOT NULL DEFAULT 1,
+    uses       INTEGER NOT NULL DEFAULT 0,
+    revoked_at TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_invites_app ON app_invites(app_id, created_at);
+
 -- ---------------------------------------------------------------------------
 -- Sessions and OAuth state
 -- ---------------------------------------------------------------------------

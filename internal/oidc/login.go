@@ -25,6 +25,12 @@ type Decision struct {
 	Redirect string
 	// Denied is the store.Reason* value when access was refused.
 	Denied string
+	// App and Join are set when access was refused but the person may join
+	// the app or ask for it (store.Access.Join). Redirect then points at the
+	// UI's denied page and the request stays pending, so the sign-in can be
+	// resumed through /login once access is granted.
+	App  string
+	Join string
 }
 
 // Continue decides a pending authorization request for the browser's session.
@@ -69,6 +75,11 @@ func (p *Provider) Continue(authReqID string, sess *store.Session, user *store.U
 			Detail: map[string]any{"reason": access.Reason},
 		}); err != nil {
 			p.log.Warn("could not record audit event", "event", "oauth.access_denied", "err", err)
+		}
+		if access.Join != "" && !promptNone {
+			q := url.Values{"app": {app.Slug}, "reason": {access.Reason}, "auth_req_id": {ar.ID}}
+			return &Decision{Redirect: p.issuer + "/denied?" + q.Encode(), Denied: access.Reason,
+				App: app.Slug, Join: access.Join}, nil
 		}
 		return &Decision{
 			Redirect: p.errorRedirect(ar, "access_denied", "the user may not use this application"),

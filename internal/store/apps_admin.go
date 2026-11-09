@@ -40,6 +40,11 @@ func validateAppPolicy(clientType, authMethod, mode, access string) error {
 	default:
 		return fmt.Errorf("%w: unknown default access %q", ErrInvalid, access)
 	}
+	// Under groups a membership grants nothing unless it is an owner or admin
+	// one, so a mode that lets people join as members would be a dead end.
+	if access == AccessGroups && mode != RegClosed && mode != RegInvite {
+		return fmt.Errorf("%w: default access groups needs registration mode closed or invite", ErrInvalid)
+	}
 	ok := false
 	switch authMethod {
 	case AuthBasic, AuthPost:
@@ -414,11 +419,20 @@ type AccessRequestDetail struct {
 
 // CreateAccessRequest inserts a pending request; a user may have one per app.
 func (s *Store) CreateAccessRequest(appID, userID int64, message string) (*AccessRequest, error) {
+	return s.createAccessRequest(s.db, appID, userID, message)
+}
+
+// execer is what *sql.DB and *sql.Tx have in common for writes.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func (s *Store) createAccessRequest(db execer, appID, userID int64, message string) (*AccessRequest, error) {
 	if len([]rune(message)) > 500 {
 		return nil, fmt.Errorf("%w: message is longer than 500 characters", ErrInvalid)
 	}
 	now := s.now()
-	res, err := s.db.Exec(`INSERT INTO access_requests(app_id, user_id, message, status, created_at)
+	res, err := db.Exec(`INSERT INTO access_requests(app_id, user_id, message, status, created_at)
 		VALUES (?, ?, ?, ?, ?)`, appID, userID, message, "pending", formatTime(now))
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -463,7 +477,8 @@ func (s *Store) PendingAccessRequests(appID int64) ([]*AccessRequestDetail, erro
 }
 
 // DecideAccessRequest approves or denies a request. An owner may only decide
-// requests for their own apps. If approved, the user becomes an active member.
+// requests for their own apps. If approved, the user becomes an active member;
+// if denied, their pending membership is removed.
 func (s *Store) DecideAccessRequest(appID, requestID, decidedBy int64, approve bool) (*AccessRequest, error) {
 	var r AccessRequest
 	err := s.inTx(func(tx *sql.Tx) error {
@@ -494,13 +509,24 @@ func (s *Store) DecideAccessRequest(appID, requestID, decidedBy int64, approve b
 		r.Status, r.DecidedAt, r.DecidedBy = newStatus, parseTime(now), decidedBy
 
 		if approve {
+			// The request's pending membership becomes active; an existing
+			// active or blocked one is left as it is.
 			_, err := tx.Exec(`INSERT INTO app_memberships(app_id, user_id, role, status, created_at, approved_by)
 				VALUES (?, ?, ?, ?, ?, ?)
-				ON CONFLICT(app_id, user_id) DO UPDATE SET status = ?, approved_by = ?`,
-				r.AppID, r.UserID, RoleMember, MemberActive, now, decidedBy, MemberActive, decidedBy)
+				ON CONFLICT(app_id, user_id) DO UPDATE SET status = excluded.status,
+					approved_by = excluded.approved_by
+				WHERE app_memberships.status = 'pending'`,
+				r.AppID, r.UserID, RoleMember, MemberActive, now, decidedBy)
 			if err != nil {
 				return fmt.Errorf("create membership: %w", err)
 			}
+			return nil
+		}
+		// A denial removes the pending membership, so the person may ask
+		// again later.
+		if _, err := tx.Exec(`DELETE FROM app_memberships WHERE app_id = ? AND user_id = ? AND status = ?`,
+			r.AppID, r.UserID, MemberPending); err != nil {
+			return fmt.Errorf("remove pending membership: %w", err)
 		}
 		return nil
 	})

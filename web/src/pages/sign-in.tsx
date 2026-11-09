@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useForm } from "react-hook-form"
-import { Navigate, useSearchParams } from "react-router"
+import { Link, Navigate, useSearchParams } from "react-router"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { CircleAlertIcon, InfoIcon, KeyRoundIcon, MailIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import {
   forwardAuthReturn,
+  inviteOfReturn,
+  rememberReturn,
   useSignInFlow,
   type Credentials,
   type SignInFlow,
@@ -56,7 +58,9 @@ export default function SignInPage() {
     ? undefined
     : forwardAuthReturn(params.get("return"))
   const me = useMe()
-  const emailLogin = !!useSetupState().data?.emailLogin
+  const setup = useSetupState().data
+  const emailLogin = !!setup?.emailLogin
+  const registrationOpen = setup?.registration === "open"
   const flow = useSignInFlow({ returnTo })
   const { step, setStep } = flow
 
@@ -97,6 +101,8 @@ export default function SignInPage() {
             flow={flow}
             authReqId={authReqId}
             emailLogin={emailLogin}
+            registrationOpen={registrationOpen}
+            returnTo={returnTo}
             defaultUsername={me.data?.user.username}
           />
         )
@@ -119,6 +125,7 @@ export default function SignInPage() {
       content = (
         <EmailStep
           authReqId={authReqId}
+          returnTo={returnTo}
           onSent={(email) => setStep({ kind: "email-code", email })}
           onUsePassword={startOver}
         />
@@ -156,11 +163,15 @@ function PasswordStep({
   flow,
   authReqId,
   emailLogin,
+  registrationOpen,
+  returnTo,
   defaultUsername,
 }: {
   flow: SignInFlow
   authReqId?: string
   emailLogin: boolean
+  registrationOpen: boolean
+  returnTo?: string
   defaultUsername?: string
 }) {
   const { t } = useI18n()
@@ -305,6 +316,19 @@ function PasswordStep({
               {t("auth.signIn.useEmail")}
             </Button>
           )}
+          {/* An invitation's own page offers sign-up even while it is closed. */}
+          {registrationOpen && !authReqId && (
+            <Button
+              variant="link"
+              size="sm"
+              className="text-muted-foreground"
+              asChild
+            >
+              <Link to={registerPath(returnTo)}>
+                {t("auth.signIn.register")}
+              </Link>
+            </Button>
+          )}
         </FieldGroup>
       </form>
     </StepCard>
@@ -400,12 +424,20 @@ function EnrolStep({
   )
 }
 
+/** Sign-up, carrying an invitation the sign-in would have returned to. */
+function registerPath(returnTo: string | undefined) {
+  const invite = inviteOfReturn(returnTo)
+  return invite ? `/register?${new URLSearchParams({ invite })}` : "/register"
+}
+
 function EmailStep({
   authReqId,
+  returnTo,
   onSent,
   onUsePassword,
 }: {
   authReqId?: string
+  returnTo?: string
   onSent: (email: string) => void
   onUsePassword: () => void
 }) {
@@ -434,6 +466,8 @@ function EmailStep({
     setFormError(null)
     try {
       await api.auth.emailStart({ email, authReqId, lang })
+      // The emailed link opens /email-login, which comes back here from it.
+      rememberReturn(authReqId ? undefined : returnTo)
       onSent(email)
     } catch (error) {
       if (hasCode(error, "invalid")) {

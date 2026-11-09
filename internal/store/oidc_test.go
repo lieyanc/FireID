@@ -282,6 +282,7 @@ func TestMigrateUpgradesV1Database(t *testing.T) {
 		`DROP INDEX idx_users_webauthn_id`,
 		`DROP INDEX idx_sessions_sid`,
 		`DROP TRIGGER sessions_backchannel_logout`,
+		`DROP TABLE app_invites`,
 	} {
 		if _, err := st.db.Exec(stmt); err != nil {
 			t.Fatal(err)
@@ -317,6 +318,10 @@ func TestMigrateUpgradesV1Database(t *testing.T) {
 		if n != 1 {
 			t.Errorf("column %s.%s missing after upgrade", c.table, c.name)
 		}
+	}
+	var invites int
+	if err := st.db.QueryRow(`SELECT COUNT(*) FROM app_invites`).Scan(&invites); err != nil {
+		t.Fatalf("app_invites missing after upgrade: %v", err)
 	}
 	var sid string
 	if err := st.db.QueryRow(`SELECT sid FROM sessions`).Scan(&sid); err != nil || len(sid) != 32 {

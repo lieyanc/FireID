@@ -318,12 +318,7 @@ func (s *Service) NotifyAccessDecision(user *store.User, appName string, approve
 		return
 	}
 	// The name is owner-supplied and goes into a header.
-	appName = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, appName)
+	appName = stripControl(appName)
 	en, zh := "approved", "已通过"
 	if !approved {
 		en, zh = "denied", "未通过"
@@ -347,4 +342,67 @@ func (s *Service) NotifyAccessDecision(user *store.User, appName string, approve
 			s.log.Warn("could not send an access decision", "userId", user.ID, "err", err)
 		}
 	}()
+}
+
+// stripControl removes control characters from a value that goes into a
+// header, such as an owner-supplied app name.
+func stripControl(v string) string {
+	return strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, v)
+}
+
+// sendLater delivers one message in the background; a failure is logged
+// without the message body.
+func (s *Service) sendLater(to, subject, body, what string, attrs ...any) {
+	s.mailWG.Add(1)
+	go func() {
+		defer s.mailWG.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := s.mailer.Send(ctx, to, subject, body); err != nil {
+			s.log.Warn("could not send "+what, append(attrs, "err", err)...)
+		}
+	}()
+}
+
+// NotifyAccessRequest tells an app's managers that someone asked to use it,
+// with a link to the app's admin page. The request's message is not included:
+// the managers read it in the UI. Best effort, like the other notices.
+func (s *Service) NotifyAccessRequest(managers []*store.User, appName, appSlug string, requester *store.User) {
+	if !s.EmailEnabled() {
+		return
+	}
+	appName = stripControl(appName)
+	link := s.issuer + "/admin/apps/" + url.PathEscape(appSlug)
+	who := requester.Username
+	if requester.DisplayName != "" {
+		who = requester.DisplayName + " (" + requester.Username + ")"
+	}
+	who = stripControl(who)
+	subject := fmt.Sprintf("Fire ID: %s asked to use %s", who, appName)
+	body := fmt.Sprintf("%s asked to use %s.\nReview the request at %s\n\n%s 申请使用 %s。\n请在 %s 审批。\n",
+		who, appName, link, who, appName, link)
+	for _, m := range managers {
+		if m.Status != store.UserActive {
+			continue
+		}
+		s.sendLater(m.Email, subject, body, "an access request notice", "userId", m.ID)
+	}
+}
+
+// SendInvite emails an invitation link. The link carries the invite token,
+// which is never logged.
+func (s *Service) SendInvite(to, appName, link string) {
+	if !s.EmailEnabled() {
+		return
+	}
+	appName = stripControl(appName)
+	subject := fmt.Sprintf("Fire ID: you are invited to %s", appName)
+	body := fmt.Sprintf("You are invited to use %s with a Fire ID account.\nOpen this link to accept: %s\n\n"+
+		"你被邀请使用 %s（Fire ID 账号）。\n打开此链接接受邀请：%s\n", appName, link, appName, link)
+	s.sendLater(to, subject, body, "an invitation")
 }

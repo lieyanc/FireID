@@ -8,13 +8,17 @@ import { useI18n } from "@/i18n"
 import { useMe } from "@/lib/queries"
 import type { User } from "@/lib/types"
 
-/** Admin destinations in the header; hidden when the person has no access. */
+/**
+ * Destinations in the header: everyone's applications, then the admin pages
+ * the person has access to.
+ */
 function AppNav() {
   const { t } = useI18n()
   const { data: me } = useMe()
   const items = [
+    { to: "/apps", label: t("apps.navigation"), show: true },
     {
-      to: "/apps",
+      to: "/admin/apps",
       label: t("admin.navigation.applications"),
       show: !!me?.permissions.manageApps,
     },
@@ -35,9 +39,8 @@ function AppNav() {
     },
   ].filter((item) => item.show)
 
-  if (items.length === 0) return null
   return (
-    <nav aria-label={t("shell.adminNav")} className="flex items-center gap-1">
+    <nav aria-label={t("shell.mainNav")} className="flex items-center gap-1">
       {items.map((item) => (
         <NavLink
           key={item.to}

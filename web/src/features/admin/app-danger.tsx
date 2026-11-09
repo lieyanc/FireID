@@ -102,7 +102,7 @@ export function AppDanger({
               app={app}
               onDone={() => {
                 setDeleting(false)
-                navigate("/apps", { replace: true })
+                navigate("/admin/apps", { replace: true })
               }}
             />
           )}

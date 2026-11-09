@@ -25,7 +25,7 @@ export default function AppsNewPage() {
     await queryClient.invalidateQueries({ queryKey: qk.apps })
     toast.success(t("admin.apps.created"))
     // Only confidential clients have a secret to show.
-    const target = `/apps/${encodeURIComponent(app.slug)}`
+    const target = `/admin/apps/${encodeURIComponent(app.slug)}`
     if (!clientSecret) {
       navigate(target)
       return
@@ -34,7 +34,7 @@ export default function AppsNewPage() {
   }
 
   if (!me) return null
-  if (!me.permissions.createApps) return <Navigate to="/apps" replace />
+  if (!me.permissions.createApps) return <Navigate to="/admin/apps" replace />
 
   return (
     <>
@@ -61,7 +61,7 @@ export default function AppsNewPage() {
         secret={result?.clientSecret ?? null}
         clientId={result?.clientId}
         onClose={() => {
-          if (result) navigate(`/apps/${encodeURIComponent(result.slug)}`)
+          if (result) navigate(`/admin/apps/${encodeURIComponent(result.slug)}`)
         }}
       />
     </>

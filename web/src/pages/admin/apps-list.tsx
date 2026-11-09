@@ -46,7 +46,7 @@ export default function AppsListPage() {
         </div>
         {createApps && (
           <Button asChild>
-            <Link to="/apps/new">
+            <Link to="/admin/apps/new">
               <PlusIcon data-icon="inline-start" />
               {t("admin.apps.create")}
             </Link>
@@ -74,7 +74,7 @@ export default function AppsListPage() {
           {createApps && (
             <EmptyContent>
               <Button asChild>
-                <Link to="/apps/new">
+                <Link to="/admin/apps/new">
                   <PlusIcon data-icon="inline-start" />
                   {t("admin.apps.create")}
                 </Link>
@@ -87,7 +87,7 @@ export default function AppsListPage() {
           {query.data.map((app) => (
             <li key={app.id}>
               <Link
-                to={`/apps/${encodeURIComponent(app.slug)}`}
+                to={`/admin/apps/${encodeURIComponent(app.slug)}`}
                 className="flex items-center gap-3 p-4 outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset"
               >
                 <AppWindowIcon

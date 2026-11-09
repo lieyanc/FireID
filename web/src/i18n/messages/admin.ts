@@ -109,7 +109,18 @@ export const admin = defineMessages({
       },
       registrationMode: {
         label: "Registration mode",
-        hint: "How people who are not yet allowed in can join. Self-service joining and requests are not available yet; until then, add members here.",
+        hint: "How people who are not yet allowed in can join.",
+        explain: {
+          closed:
+            "Nobody can join by themselves; managers add members, or send an invite.",
+          invite:
+            "People join only through an invite link from the Invites card.",
+          open: "Any active user can join from their application list or the refusal page.",
+          adminApproval:
+            "People ask from their application list; a manager approves or denies under Access requests.",
+        },
+        groupsConflict:
+          "With access through granted groups, joining as a member grants nothing; choose Closed or Invite.",
         closed: "Closed: only managers add members",
         invite: "Invite: joining needs an invitation",
         open: "Open: any active user may join",
@@ -117,7 +128,7 @@ export const admin = defineMessages({
       },
       defaultAccess: {
         label: "Default access",
-        hint: "Who may use the app once they sign in. Members and granted groups are separate from this; every rule applies in turn.",
+        hint: "Who may use the app once they sign in. Under “Members of granted groups”, plain members get in only through a group; owners and admins always do.",
         membersOnly: "Members only",
         groups: "Members of granted groups",
         allUsers: "All active users",
@@ -237,6 +248,47 @@ export const admin = defineMessages({
       approved: "Request approved",
       denied: "Request denied",
       alreadyDecided: "The request was already decided",
+    },
+    invites: {
+      title: "Invites",
+      description:
+        "Links that let people join the application, in any registration mode.",
+      create: "Create invite",
+      createTitle: "Create an invite",
+      createDescription:
+        "Anyone who opens the link and signs in becomes a member, until it expires or is used up.",
+      email: "Email (optional)",
+      emailHint:
+        "Only the account with this verified address can accept. If email is set up, the link is also sent there.",
+      emailInvalid: "Enter a valid email address",
+      role: "Role",
+      roleAdminHint: "Only the owner or a super admin can invite admins.",
+      expires: "Valid for (days)",
+      maxUses: "Uses",
+      rangeError: "Enter a whole number from {min} to {max}",
+      creating: "Creating…",
+      created: "Invite created",
+      urlTitle: "Invite link",
+      urlDescription: "This is the only time the link is shown.",
+      urlWarning:
+        "Copy the link now and send it to the person. It cannot be shown again; if it is lost, revoke the invite and create a new one.",
+      copyUrl: "Copy link",
+      done: "Done",
+      empty: "No invites",
+      anyone: "Anyone with the link",
+      uses: "{uses} of {max} used",
+      expiresAt: "Expires {date}",
+      expired: "Expired",
+      usedUp: "Used up",
+      revoked: "Revoked",
+      byWhom: "By {name}, {date}",
+      revoke: "Revoke",
+      revokeLabel: "Revoke the invite for {target}",
+      revokeTitle: "Revoke this invite?",
+      revokeDescription:
+        "The link stops working at once. People who already accepted keep their membership.",
+      revoking: "Revoking…",
+      revokedToast: "Invite revoked",
     },
     forwardAuth: {
       title: "Forward auth",
@@ -421,6 +473,11 @@ export const admin = defineMessages({
           member_set: "Member added or changed",
           member_remove: "Member removed",
           access_decision: "Access request decided",
+          self_join: "Joined an application",
+          access_request: "Asked to use an application",
+          invite_create: "Invite created",
+          invite_revoke: "Invite revoked",
+          invite_accept: "Invite accepted",
         },
         group: {
           create: "Group created",
@@ -582,7 +639,16 @@ export const admin = defineMessages({
       },
       registrationMode: {
         label: "注册模式",
-        hint: "尚无权限的人如何加入。自助加入和申请功能尚未开放，在此之前请在这里添加成员。",
+        hint: "尚无权限的人如何加入。",
+        explain: {
+          closed: "任何人都不能自行加入；由管理者添加成员或发送邀请。",
+          invite: "只能通过“邀请”卡片生成的邀请链接加入。",
+          open: "任何活跃用户都可以在应用列表或拒绝页面自行加入。",
+          adminApproval:
+            "用户在应用列表中提出申请，由管理者在“访问请求”中批准或拒绝。",
+        },
+        groupsConflict:
+          "按已授权用户组访问时，以成员身份加入不会获得任何权限；请选择“关闭”或“邀请”。",
         closed: "关闭：只能由管理员添加成员",
         invite: "邀请：凭邀请加入",
         open: "开放：任何活跃用户都可自行加入",
@@ -590,7 +656,7 @@ export const admin = defineMessages({
       },
       defaultAccess: {
         label: "默认访问权限",
-        hint: "登录之后谁可以使用应用。成员与已授权的用户组另有规则，各条规则依次生效。",
+        hint: "登录之后谁可以使用应用。选择“已授权用户组的成员”时，普通成员只能通过用户组获得权限；所有者和管理员始终可以使用。",
         membersOnly: "仅成员",
         groups: "已授权用户组的成员",
         allUsers: "所有活跃用户",
@@ -704,6 +770,45 @@ export const admin = defineMessages({
       approved: "请求已批准",
       denied: "请求已拒绝",
       alreadyDecided: "该请求已被处理",
+    },
+    invites: {
+      title: "邀请",
+      description: "让他人加入此应用的链接，在任何注册模式下都有效。",
+      create: "创建邀请",
+      createTitle: "创建邀请",
+      createDescription:
+        "在过期或用完次数之前，任何打开链接并登录的人都会成为成员。",
+      email: "邮箱（可选）",
+      emailHint:
+        "只有已验证该邮箱的账户才能接受。如果配置了邮件，链接也会发送到该邮箱。",
+      emailInvalid: "请输入有效的邮箱地址",
+      role: "角色",
+      roleAdminHint: "只有所有者或超级管理员可以邀请管理员。",
+      expires: "有效期（天）",
+      maxUses: "可用次数",
+      rangeError: "请输入 {min} 到 {max} 之间的整数",
+      creating: "正在创建…",
+      created: "邀请已创建",
+      urlTitle: "邀请链接",
+      urlDescription: "链接只会显示这一次。",
+      urlWarning:
+        "请现在复制链接并发送给对方。之后无法再次查看；如果丢失，请撤销此邀请并重新创建。",
+      copyUrl: "复制链接",
+      done: "完成",
+      empty: "没有邀请",
+      anyone: "任何持有链接的人",
+      uses: "已用 {uses} / {max} 次",
+      expiresAt: "{date} 过期",
+      expired: "已过期",
+      usedUp: "已用完",
+      revoked: "已撤销",
+      byWhom: "{name} 创建于 {date}",
+      revoke: "撤销",
+      revokeLabel: "撤销发给 {target} 的邀请",
+      revokeTitle: "确定撤销此邀请？",
+      revokeDescription: "链接会立即失效。已经接受邀请的人仍保留成员身份。",
+      revoking: "正在撤销…",
+      revokedToast: "邀请已撤销",
     },
     forwardAuth: {
       title: "转发认证",
@@ -884,6 +989,11 @@ export const admin = defineMessages({
           member_set: "添加或修改成员",
           member_remove: "移除成员",
           access_decision: "处理访问请求",
+          self_join: "自行加入应用",
+          access_request: "申请使用应用",
+          invite_create: "创建邀请",
+          invite_revoke: "撤销邀请",
+          invite_accept: "接受邀请",
         },
         group: {
           create: "创建用户组",

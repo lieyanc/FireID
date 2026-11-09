@@ -1,7 +1,7 @@
 import type { User } from "@/lib/types"
 
 /** The name to show for a person: their display name, else the username. */
-export function displayName(user: User) {
+export function displayName(user: Pick<User, "displayName" | "username">) {
   return user.displayName || user.username
 }
 

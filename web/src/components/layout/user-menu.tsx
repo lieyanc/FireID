@@ -2,6 +2,7 @@ import { Link, useNavigate } from "react-router"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   AppWindowIcon,
+  LayoutGridIcon,
   KeyRoundIcon,
   LogOutIcon,
   ScrollTextIcon,
@@ -74,6 +75,15 @@ export function UserMenu({ user }: { user: User }) {
             </span>
           </div>
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem asChild>
+            <Link to="/apps">
+              <LayoutGridIcon />
+              {t("apps.navigation")}
+            </Link>
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
         {(me?.permissions.manageApps ||
           me?.permissions.superAdmin ||
           me?.permissions.viewAudit ||
@@ -83,7 +93,7 @@ export function UserMenu({ user }: { user: User }) {
             <DropdownMenuGroup>
               {me.permissions.manageApps && (
                 <DropdownMenuItem asChild>
-                  <Link to="/apps">
+                  <Link to="/admin/apps">
                     <AppWindowIcon />
                     {t("admin.navigation.applications")}
                   </Link>

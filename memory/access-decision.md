@@ -9,4 +9,4 @@ metadata:
 
 **Why:** a second implementation of the rule drifts, and a drifted access rule is a silent authorization bug.
 
-**How to apply:** the order is fixed — suspended app or inactive account refuses everyone; super admin passes; blocked membership refuses; pending membership refuses with a reason the UI can act on; active membership allows; a granted group allows; `default_access = all_users` allows any active user. Add new cases inside `CanUseApp`, not at call sites.
+**How to apply:** the order is fixed — suspended app or inactive account refuses everyone; super admin passes; blocked membership refuses; pending membership refuses with a reason the UI can act on; active membership allows (under `default_access = groups` only an owner or admin one); a granted group allows; `default_access = all_users` allows any active user. Add new cases inside `CanUseApp`, not at call sites. A refusal also carries `Join` (see [registration-modes](registration-modes.md)).

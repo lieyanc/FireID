@@ -1,0 +1,166 @@
+import { defineMessages } from "@/i18n/define"
+
+export const apps = defineMessages({
+  en: {
+    navigation: "My apps",
+    catalog: {
+      title: "Applications",
+      description:
+        "Applications you can use, and the ones you can join or ask to use.",
+      empty: "No applications for you yet",
+      emptyHint:
+        "When an application lets you join, or someone adds you, it shows up here.",
+      open: "Open",
+      openLabel: "Open {app}",
+      pending: "Waiting for approval",
+    },
+    join: {
+      join: "Join",
+      joining: "Joining…",
+      joinLabel: "Join {app}",
+      joined: "You can now use {app}",
+      request: "Request access",
+      requestLabel: "Request access to {app}",
+      requestTitle: "Request access to {app}",
+      requestDescription:
+        "The application's managers decide. You can use it once they approve.",
+      message: "Message (optional)",
+      messagePlaceholder: "Why you need access, for the managers",
+      messageTooLong: "At most {max} characters",
+      send: "Send request",
+      sending: "Sending…",
+      requested: "Request sent. You will be able to use {app} once approved.",
+      alreadyPending: "You have already asked; the request is waiting.",
+      unavailable:
+        "This application cannot be joined from here any more. Reload to see where you stand.",
+    },
+    denied: {
+      allowed: "You can use the application now.",
+      allowedTitle: "You can use {app}",
+      canJoin:
+        "You are not a member yet, but anyone may join this application.",
+      canRequest:
+        "You are not a member yet. Ask for access and the application's managers will decide.",
+      continue: "Continue to {app}",
+    },
+    register: {
+      title: "Create an account",
+      description: "Your account becomes active once you confirm your email.",
+      inviteNote: "You are signing up through an invitation.",
+      submit: "Create account",
+      submitting: "Creating…",
+      codeTitle: "Confirm your email",
+      codeSent: "We sent a 6-digit code and a link to {email}.",
+      codeSubmit: "Confirm and sign in",
+      created: "Account created",
+      noEmailTitle: "Account created",
+      noEmailDescription:
+        "Email is not set up on this server, so an administrator has to activate your account before you can sign in.",
+      closed:
+        "Registration is closed. You need an invitation to create an account.",
+      invalidInvite:
+        "The invitation is no longer valid. Ask for a new one, or sign up without it if registration is open.",
+      taken: "That username or email is already in use.",
+      haveAccount: "Already have an account? Sign in",
+    },
+    invite: {
+      title: "You're invited to {app}",
+      description: "Accept the invitation to start using the application.",
+      forEmail: "This invitation is for {email}.",
+      expires: "Expires {date}",
+      signedInAs: "Signed in as {name}",
+      signIn: "Sign in to accept",
+      register: "Create an account",
+      accept: "Accept invitation",
+      accepting: "Accepting…",
+      accepted: "You can now use {app}",
+      openApp: "Open {app}",
+      allApps: "See your applications",
+      invalidTitle: "This invitation cannot be used",
+      invalidDescription:
+        "The link is wrong, has expired, was revoked or has been used up. Ask the person who sent it for a new one.",
+      emailMismatch:
+        "This invitation is for another email address. Sign in with the account that has that verified address.",
+      blocked:
+        "The application's managers have blocked your access, so the invitation cannot be accepted.",
+      switchAccount: "Use another account",
+    },
+  },
+  zh: {
+    navigation: "我的应用",
+    catalog: {
+      title: "应用",
+      description: "你可以使用的应用，以及可以加入或申请使用的应用。",
+      empty: "暂时没有可用的应用",
+      emptyHint:
+        "当某个应用允许你加入，或有人把你添加为成员后，它会出现在这里。",
+      open: "打开",
+      openLabel: "打开 {app}",
+      pending: "等待审批",
+    },
+    join: {
+      join: "加入",
+      joining: "正在加入…",
+      joinLabel: "加入 {app}",
+      joined: "你现在可以使用 {app} 了",
+      request: "申请使用",
+      requestLabel: "申请使用 {app}",
+      requestTitle: "申请使用 {app}",
+      requestDescription: "由应用管理者决定，批准后即可使用。",
+      message: "留言（可选）",
+      messagePlaceholder: "向管理者说明你为什么需要使用",
+      messageTooLong: "最多 {max} 个字符",
+      send: "提交申请",
+      sending: "正在提交…",
+      requested: "申请已提交，批准后即可使用 {app}。",
+      alreadyPending: "你已经申请过了，正在等待处理。",
+      unavailable: "此应用已无法在这里加入，请刷新页面查看当前状态。",
+    },
+    denied: {
+      allowed: "你现在可以使用此应用了。",
+      allowedTitle: "你可以使用 {app} 了",
+      canJoin: "你还不是成员，但任何人都可以加入此应用。",
+      canRequest: "你还不是成员。提交申请后由应用管理者决定。",
+      continue: "继续前往 {app}",
+    },
+    register: {
+      title: "创建账户",
+      description: "确认邮箱后账户即可生效。",
+      inviteNote: "你正在通过邀请注册。",
+      submit: "创建账户",
+      submitting: "正在创建…",
+      codeTitle: "确认邮箱",
+      codeSent: "我们已向 {email} 发送了 6 位验证码和链接。",
+      codeSubmit: "确认并登录",
+      created: "账户已创建",
+      noEmailTitle: "账户已创建",
+      noEmailDescription:
+        "此服务器未配置邮件，需要管理员激活你的账户后才能登录。",
+      closed: "注册已关闭，需要邀请才能创建账户。",
+      invalidInvite:
+        "邀请已失效。请重新获取邀请；如果开放注册，也可以不使用邀请注册。",
+      taken: "该用户名或邮箱已被使用。",
+      haveAccount: "已有账户？登录",
+    },
+    invite: {
+      title: "你受邀使用 {app}",
+      description: "接受邀请即可开始使用该应用。",
+      forEmail: "此邀请发给 {email}。",
+      expires: "{date} 过期",
+      signedInAs: "当前登录：{name}",
+      signIn: "登录后接受",
+      register: "创建账户",
+      accept: "接受邀请",
+      accepting: "正在接受…",
+      accepted: "你现在可以使用 {app} 了",
+      openApp: "打开 {app}",
+      allApps: "查看我的应用",
+      invalidTitle: "此邀请无法使用",
+      invalidDescription:
+        "链接有误、已过期、已撤销或使用次数已满。请联系发送者重新邀请。",
+      emailMismatch: "此邀请发给另一个邮箱地址。请使用已验证该邮箱的账户登录。",
+      blocked: "应用管理者已禁止你访问，因此无法接受邀请。",
+      switchAccount: "使用其他账户",
+    },
+  },
+})

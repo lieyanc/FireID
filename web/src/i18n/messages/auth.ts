@@ -32,6 +32,7 @@ export const auth = defineMessages({
       submitting: "Signing in…",
       useEmail: "Email me a code instead",
       usePassword: "Sign in with a password instead",
+      register: "No account yet? Create one",
       redirecting: "Taking you back to the application…",
     },
     totp: {
@@ -143,6 +144,7 @@ export const auth = defineMessages({
       submitting: "登录中…",
       useEmail: "改用邮箱验证码登录",
       usePassword: "改用密码登录",
+      register: "还没有账户？立即创建",
       redirecting: "正在返回应用…",
     },
     totp: {

@@ -61,6 +61,12 @@ export type SignedIn = {
   user: User
   redirectTo?: string
   denied?: string
+  /**
+   * With a refusal the person may do something about: the app's slug and
+   * what they may do. redirectTo then points at /denied.
+   */
+  deniedApp?: string
+  join?: "join" | "request"
   authRequestError?: AuthRequestError | string
   recoveryCodes?: string[]
 }
@@ -294,4 +300,48 @@ export type SigningKey = {
   retiredAt: string | null
   /** The key new tokens are signed with. */
   current: boolean
+}
+
+/** What a refused person may do about it (store.Access.Join). */
+export type JoinMode = "join" | "request" | ""
+
+/** An app in the signed-in person's catalog (GET /api/apps). */
+export type CatalogApp = {
+  slug: string
+  name: string
+  description: string
+  homepageUrl: string
+  logoUrl: string
+  state: "allowed" | "pending" | "available"
+  join: JoinMode
+}
+
+/** An invitation to use an app (GET /api/admin/apps/:slug/invites). */
+export type Invite = {
+  id: number
+  /** "" when anyone with the link may accept it. */
+  email: string
+  role: Extract<MemberRole, "member" | "admin">
+  createdBy: AuditPerson
+  createdAt: string
+  expiresAt: string
+  maxUses: number
+  uses: number
+  revokedAt: string | null
+}
+
+/** Fields POST /api/admin/apps/:slug/invites accepts. */
+export type InviteCreate = {
+  email?: string
+  role?: Invite["role"]
+  expiresInDays?: number
+  maxUses?: number
+}
+
+/** GET /api/invites/:token: what the link offers, without a session. */
+export type InvitePreview = {
+  app: { name: string; description: string; logoUrl: string }
+  /** "" when the invite is not tied to an address. */
+  email: string
+  expiresAt: string
 }

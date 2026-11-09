@@ -21,7 +21,9 @@ import {
   AUTH_METHOD_LABELS,
   CLIENT_TYPE_LABELS,
   DEFAULT_ACCESS_LABELS,
+  REGISTRATION_MODE_HINTS,
   REGISTRATION_MODE_LABELS,
+  SELF_JOIN_MODES,
   optionsOf,
 } from "@/features/admin/labels"
 import { NativeSelect } from "@/features/admin/native-select"
@@ -144,41 +146,56 @@ export function AppForm({
           }
         }
       })
-    return z.object({
-      slug: creating
-        ? z
-            .string()
-            .trim()
-            .min(1, t("admin.apps.slug.required"))
-            .max(SLUG_MAX, t("admin.apps.slug.tooLong", { max: SLUG_MAX }))
-            .regex(SLUG_PATTERN, t("admin.apps.slug.invalid"))
-        : z.string(),
-      name: z
-        .string()
-        .trim()
-        .min(1, t("admin.apps.name.required"))
-        .max(NAME_MAX, t("admin.apps.name.tooLong", { max: NAME_MAX })),
-      description: z
-        .string()
-        .max(
-          DESCRIPTION_MAX,
-          t("admin.apps.descriptionField.tooLong", { max: DESCRIPTION_MAX })
-        ),
-      homepageUrl: z
-        .string()
-        .trim()
-        .refine((v) => !v || isHttpUrl(v), t("admin.apps.homepage.invalid")),
-      clientType: z.enum(["confidential", "public"]),
-      tokenEndpointAuthMethod: z.enum([
-        "client_secret_basic",
-        "client_secret_post",
-        "none",
-      ]),
-      redirectUris: uriList(true),
-      postLogoutRedirectUris: uriList(false),
-      registrationMode: z.enum(["closed", "invite", "open", "admin_approval"]),
-      defaultAccess: z.enum(["all_users", "groups", "members_only"]),
-    })
+    return z
+      .object({
+        slug: creating
+          ? z
+              .string()
+              .trim()
+              .min(1, t("admin.apps.slug.required"))
+              .max(SLUG_MAX, t("admin.apps.slug.tooLong", { max: SLUG_MAX }))
+              .regex(SLUG_PATTERN, t("admin.apps.slug.invalid"))
+          : z.string(),
+        name: z
+          .string()
+          .trim()
+          .min(1, t("admin.apps.name.required"))
+          .max(NAME_MAX, t("admin.apps.name.tooLong", { max: NAME_MAX })),
+        description: z
+          .string()
+          .max(
+            DESCRIPTION_MAX,
+            t("admin.apps.descriptionField.tooLong", { max: DESCRIPTION_MAX })
+          ),
+        homepageUrl: z
+          .string()
+          .trim()
+          .refine((v) => !v || isHttpUrl(v), t("admin.apps.homepage.invalid")),
+        clientType: z.enum(["confidential", "public"]),
+        tokenEndpointAuthMethod: z.enum([
+          "client_secret_basic",
+          "client_secret_post",
+          "none",
+        ]),
+        redirectUris: uriList(true),
+        postLogoutRedirectUris: uriList(false),
+        registrationMode: z.enum([
+          "closed",
+          "invite",
+          "open",
+          "admin_approval",
+        ]),
+        defaultAccess: z.enum(["all_users", "groups", "members_only"]),
+      })
+      .refine(
+        (draft) =>
+          draft.defaultAccess !== "groups" ||
+          !SELF_JOIN_MODES.includes(draft.registrationMode),
+        {
+          path: ["registrationMode"],
+          message: t("admin.apps.registrationMode.groupsConflict"),
+        }
+      )
   }, [t, creating])
 
   const form = useForm<Draft>({
@@ -189,6 +206,14 @@ export function AppForm({
   // useWatch (rather than watch()) keeps the component memoizable.
   const clientType = useWatch({ control: form.control, name: "clientType" })
   const authMethods = AUTH_METHODS_FOR[clientType]
+  const registrationMode = useWatch({
+    control: form.control,
+    name: "registrationMode",
+  })
+  const defaultAccess = useWatch({
+    control: form.control,
+    name: "defaultAccess",
+  })
 
   // A client type allows only some token endpoint methods; keep the choice
   // valid when the type changes.
@@ -366,23 +391,31 @@ export function AppForm({
           </FieldDescription>
           <FieldError errors={[errors.postLogoutRedirectUris]} />
         </Field>
-        <Field>
+        <Field data-invalid={!!errors.registrationMode || undefined}>
           <FieldLabel htmlFor={id("registrationMode")}>
             {t("admin.apps.registrationMode.label")}
           </FieldLabel>
           <NativeSelect
             id={id("registrationMode")}
+            aria-invalid={!!errors.registrationMode}
             {...form.register("registrationMode")}
           >
             {optionsOf(REGISTRATION_MODE_LABELS).map((mode) => (
-              <option key={mode} value={mode}>
+              <option
+                key={mode}
+                value={mode}
+                disabled={
+                  defaultAccess === "groups" && SELF_JOIN_MODES.includes(mode)
+                }
+              >
                 {t(REGISTRATION_MODE_LABELS[mode])}
               </option>
             ))}
           </NativeSelect>
           <FieldDescription>
-            {t("admin.apps.registrationMode.hint")}
+            {t(REGISTRATION_MODE_HINTS[registrationMode])}
           </FieldDescription>
+          <FieldError errors={[errors.registrationMode]} />
         </Field>
         <Field>
           <FieldLabel htmlFor={id("defaultAccess")}>
@@ -393,7 +426,14 @@ export function AppForm({
             {...form.register("defaultAccess")}
           >
             {optionsOf(DEFAULT_ACCESS_LABELS).map((access) => (
-              <option key={access} value={access}>
+              <option
+                key={access}
+                value={access}
+                disabled={
+                  access === "groups" &&
+                  SELF_JOIN_MODES.includes(registrationMode)
+                }
+              >
                 {t(DEFAULT_ACCESS_LABELS[access])}
               </option>
             ))}

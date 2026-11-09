@@ -32,15 +32,73 @@ export type Step =
 /** The forward-auth endpoint the sign-in page may send the browser back to. */
 const FORWARD_AUTH_RETURN = "/api/authz/authorize?"
 
+/** An invitation page (/invite/:token); the token is base64url. */
+const INVITE_RETURN = /^\/invite\/[A-Za-z0-9_-]{1,200}$/
+
 /**
  * Accepts a `return` parameter only when it points at the IdP's own
  * forward-auth authorize endpoint, which is where that endpoint's sign-in
- * redirect always points. Anything else is dropped, so the parameter cannot
- * be used to send someone to another site after they sign in.
+ * redirect always points, or at an invitation page on this site. Anything
+ * else is dropped, so the parameter cannot be used to send someone to
+ * another site after they sign in.
  */
 export function forwardAuthReturn(value: string | null): string | undefined {
   if (typeof value !== "string") return undefined
+  if (INVITE_RETURN.test(value)) return value
   return value.startsWith(FORWARD_AUTH_RETURN) ? value : undefined
+}
+
+/** The sign-in link that comes back to an invitation page afterwards. */
+export function inviteSignInPath(token: string) {
+  return `/sign-in?${new URLSearchParams({ return: `/invite/${token}` })}`
+}
+
+const REMEMBERED_RETURN = "fireid.signInReturn"
+/** As long as an emailed sign-in link stays valid (auth.EmailLoginTTL). */
+const REMEMBER_FOR_MS = 10 * 60_000
+
+/**
+ * Keeps a return path for an email-link sign-in started on this browser. The
+ * link the server mails carries no return path, so /email-login (often in a
+ * new tab) picks it up from here. Only a value forwardAuthReturn accepts is
+ * stored, and it is checked again when read.
+ */
+export function rememberReturn(returnTo: string | undefined) {
+  try {
+    if (!returnTo) {
+      localStorage.removeItem(REMEMBERED_RETURN)
+      return
+    }
+    localStorage.setItem(
+      REMEMBERED_RETURN,
+      JSON.stringify({ path: returnTo, until: Date.now() + REMEMBER_FOR_MS })
+    )
+  } catch {
+    // Storage disabled: the person ends up on the account page instead.
+  }
+}
+
+/** The remembered return path, if still fresh and valid; forgets it. */
+export function takeRememberedReturn(): string | undefined {
+  try {
+    const raw = localStorage.getItem(REMEMBERED_RETURN)
+    localStorage.removeItem(REMEMBERED_RETURN)
+    if (!raw) return undefined
+    const value: unknown = JSON.parse(raw)
+    if (typeof value !== "object" || value === null) return undefined
+    const { path, until } = value as { path?: unknown; until?: unknown }
+    if (typeof until !== "number" || until < Date.now()) return undefined
+    return forwardAuthReturn(typeof path === "string" ? path : null)
+  } catch {
+    return undefined
+  }
+}
+
+/** The invite token of an /invite/:token return path, if it is one. */
+export function inviteOfReturn(returnTo: string | undefined) {
+  return returnTo && INVITE_RETURN.test(returnTo)
+    ? returnTo.slice("/invite/".length)
+    : undefined
 }
 
 export function useSignInFlow({
